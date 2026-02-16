@@ -142,7 +142,7 @@ const StationSelectionScreen: React.FC<Props> = ({ onSelect }) => {
               </div>
               {/* Optional 3D badge for some categories */}
               {(station.id === 'Panfry' || station.id === 'Entree') && (
-                <div className="absolute top-3 right-3 z-10 bg-black/40 backdrop-blur-md px-2 py-1 rounded text-[10px] font-bold text-white flex items-center gap-1 border border-white/10">
+                <div className="absolute top-3 right-3 z-10 bg-black/40 backdrop-blur-md px-1.5 py-0.5 rounded text-[10px] font-bold text-white flex items-center gap-1 border border-white/10">
                   <span className="material-icons-round text-[10px] text-[#D4AF37]">view_in_ar</span> 3D
                 </div>
               )}

@@ -92,6 +92,7 @@ const App: React.FC = () => {
           menuItems={menu}
           onAddToCart={addToCart} 
           onPreview={handlePreview} 
+          onAR={handleAR}
           onViewCart={() => setCurrentView('CART')}
           onOpenQuestionnaire={() => setIsQuestionnaireOpen(true)}
           onOpenImporter={() => setIsImporterOpen(true)}

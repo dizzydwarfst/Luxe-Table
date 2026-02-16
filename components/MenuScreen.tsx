@@ -7,6 +7,7 @@ interface Props {
   menuItems: MenuItem[];
   onAddToCart: (item: MenuItem) => void;
   onPreview: (item: MenuItem) => void;
+  onAR: (item: MenuItem) => void;
   onViewCart: () => void;
   onOpenQuestionnaire: () => void;
   onOpenImporter: () => void;
@@ -14,20 +15,17 @@ interface Props {
   stationName: string;
 }
 
-const MenuScreen: React.FC<Props> = ({ menuItems, onAddToCart, onPreview, onViewCart, onOpenQuestionnaire, onOpenImporter, cartCount, stationName }) => {
-  // Sync active category with the station selected in the previous screen
+const MenuScreen: React.FC<Props> = ({ menuItems, onAddToCart, onPreview, onAR, onViewCart, onOpenQuestionnaire, onOpenImporter, cartCount, stationName }) => {
   const [activeCat, setActiveCat] = useState<string>(() => {
     return CATEGORIES.includes(stationName as any) ? stationName : CATEGORIES[0];
   });
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Update active category if station changes externally
   useEffect(() => {
     if (CATEGORIES.includes(stationName as any)) {
       setActiveCat(stationName);
       
-      // Auto-scroll to the active category button
       const timer = setTimeout(() => {
         const activeButton = scrollContainerRef.current?.querySelector(`[data-cat="${stationName}"]`);
         if (activeButton) {
@@ -46,7 +44,7 @@ const MenuScreen: React.FC<Props> = ({ menuItems, onAddToCart, onPreview, onView
     switch(cat) {
       case 'Apps': return 'tapas';
       case 'Salads': return 'eco';
-      case 'Panfry': return 'skillet';
+      case 'Panfry': return 'flatware';
       case 'Entree': return 'restaurant';
       case 'Ovens': return 'outdoor_grill';
       case 'Bar': return 'liquor';
@@ -112,45 +110,45 @@ const MenuScreen: React.FC<Props> = ({ menuItems, onAddToCart, onPreview, onView
         </div>
       </header>
 
-      {/* Slidable Stations / Categories */}
+      {/* Tighter, more elegant Category Nav */}
       <div className="relative -mt-6 z-30 px-6">
         <div 
           ref={scrollContainerRef}
-          className="flex gap-3 overflow-x-auto no-scrollbar scroll-smooth snap-x snap-mandatory py-4"
+          className="flex gap-2.5 overflow-x-auto no-scrollbar scroll-smooth snap-x py-3"
         >
           {CATEGORIES.map(cat => (
             <button 
               key={cat}
               data-cat={cat}
               onClick={() => handleCategoryClick(cat)}
-              className={`snap-start flex-shrink-0 px-6 py-4 rounded-3xl border-2 font-black text-xs uppercase tracking-widest whitespace-nowrap transition-all duration-300 flex items-center gap-3 shadow-lg ${
+              className={`snap-start flex-shrink-0 px-4 py-3 rounded-2xl border-2 font-black text-[10px] uppercase tracking-wider whitespace-nowrap transition-all duration-300 flex items-center gap-2 shadow-md ${
                 activeCat === cat 
-                  ? 'bg-navy text-primary border-primary shadow-primary/20 ring-4 ring-primary/10' 
-                  : 'bg-white dark:bg-slate-900 text-slate-400 border-white dark:border-slate-800 hover:border-slate-200 dark:hover:border-slate-700'
+                  ? 'bg-navy text-primary border-primary shadow-primary/10' 
+                  : 'bg-white dark:bg-slate-900 text-slate-400 border-white dark:border-slate-800'
               }`}
             >
-              <span className={`material-icons-round text-lg ${activeCat === cat ? 'text-primary' : 'text-slate-300'}`}>
+              <span className={`material-icons-round text-base ${activeCat === cat ? 'text-primary' : 'text-slate-300'}`}>
                 {getIcon(cat)}
               </span>
               {cat}
             </button>
           ))}
-          <div className="flex-shrink-0 w-4"></div>
+          <div className="flex-shrink-0 w-8"></div>
         </div>
       </div>
 
       <main className="flex-1 px-6 pb-28 overflow-y-auto no-scrollbar pt-2">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h2 className="text-xl font-black text-navy dark:text-white uppercase tracking-tight flex items-center gap-2">
-              {activeCat}
+            <h2 className="text-lg font-black text-navy dark:text-white uppercase tracking-tight flex items-center gap-2">
+              {activeCat} Selection
               <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
             </h2>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-0.5">Kitchen Station 0{CATEGORIES.indexOf(activeCat as any) + 1}</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-0.5">Station 0{CATEGORIES.indexOf(activeCat as any) + 1}</p>
           </div>
           <div className="bg-slate-100 dark:bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800">
              <span className="text-[10px] font-black text-navy dark:text-primary uppercase tracking-widest">
-              {menuItems.filter(item => item.category === activeCat).length} Dishes
+              {menuItems.filter(item => item.category === activeCat).length} Results
             </span>
           </div>
         </div>
@@ -160,8 +158,8 @@ const MenuScreen: React.FC<Props> = ({ menuItems, onAddToCart, onPreview, onView
             menuItems.filter(item => item.category === activeCat).map((item, idx) => (
               <div 
                 key={item.id} 
+                className="group bg-white dark:bg-slate-900 rounded-[2rem] p-3 shadow-xl hover:shadow-2xl transition-all duration-500 relative border border-slate-100 dark:border-slate-800 animate-slide-up"
                 style={{ animationDelay: `${idx * 50}ms` }}
-                className="group bg-white dark:bg-slate-900 rounded-[2rem] p-3 shadow-xl shadow-slate-200/50 dark:shadow-none hover:shadow-2xl transition-all duration-500 relative border border-slate-100 dark:border-slate-800 animate-slide-up"
               >
                 <div 
                   onClick={() => onPreview(item)}
@@ -169,20 +167,26 @@ const MenuScreen: React.FC<Props> = ({ menuItems, onAddToCart, onPreview, onView
                 >
                   <img src={item.image} alt={item.name} className="object-cover w-full h-full group-hover:scale-110 transition-transform duration-700" />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                  <button aria-label="View in AR" className="absolute top-3 right-3 bg-navy/80 backdrop-blur-md p-2 rounded-2xl text-primary hover:bg-navy transition-all shadow-xl z-10 border border-white/10 active:scale-90">
+                  
+                  <button 
+                    aria-label="View in AR" 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAR(item);
+                    }}
+                    className="absolute top-3 right-3 bg-navy/80 backdrop-blur-md p-2 rounded-2xl text-primary hover:bg-navy transition-all shadow-xl z-10 border border-white/10 active:scale-90"
+                  >
                     <span className="material-icons-round text-sm">view_in_ar</span>
                   </button>
                 </div>
                 <div className="space-y-1.5 px-1">
-                  <div className="flex justify-between items-start">
-                    <h3 className="font-extrabold text-navy dark:text-white text-sm leading-tight line-clamp-1">{item.name}</h3>
-                  </div>
+                  <h3 className="font-extrabold text-navy dark:text-white text-sm leading-tight line-clamp-1">{item.name}</h3>
                   <p className="text-[10px] text-slate-400 font-medium line-clamp-2 h-7 leading-relaxed">{item.description}</p>
                   <div className="flex items-center justify-between pt-2">
                     <span className="font-black text-navy dark:text-primary text-base tracking-tighter">${item.price.toFixed(2)}</span>
                     <button 
                       onClick={() => onAddToCart(item)}
-                      className="bg-primary hover:bg-navy hover:text-primary text-navy p-2 rounded-xl shadow-lg shadow-primary/20 transition-all active:scale-90 ring-4 ring-primary/10"
+                      className="bg-primary hover:bg-navy hover:text-primary text-navy p-2 rounded-xl shadow-lg shadow-primary/20 transition-all active:scale-90"
                     >
                       <span className="material-icons-round text-sm font-black">add</span>
                     </button>
@@ -191,18 +195,18 @@ const MenuScreen: React.FC<Props> = ({ menuItems, onAddToCart, onPreview, onView
               </div>
             ))
           ) : (
-            <div className="col-span-2 py-20 text-center bg-white dark:bg-slate-900 rounded-[2.5rem] border-2 border-dashed border-slate-100 dark:border-slate-800 shadow-inner">
-              <div className="w-20 h-20 bg-slate-50 dark:bg-slate-950 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300 shadow-xl">
-                <span className="material-icons-round text-4xl">inventory_2</span>
+            <div className="col-span-2 py-20 text-center bg-white dark:bg-slate-900 rounded-[2.5rem] border-2 border-dashed border-slate-100 dark:border-slate-800">
+              <div className="w-16 h-16 bg-slate-50 dark:bg-slate-950 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300">
+                <span className="material-icons-round text-3xl">inventory_2</span>
               </div>
-              <h3 className="text-lg font-extrabold text-navy dark:text-white mb-2">Station Empty</h3>
-              <p className="text-xs text-slate-400 font-medium px-12 leading-relaxed">No items have been assigned to {activeCat} yet. Try importing from a menu link.</p>
+              <h3 className="text-lg font-extrabold text-navy dark:text-white mb-2">Empty Station</h3>
+              <p className="text-xs text-slate-400 font-medium px-12 leading-relaxed">No items assigned to {activeCat}. Use the Smart Importer to add some!</p>
               <button 
                 onClick={onOpenImporter}
-                className="mt-8 bg-navy text-primary text-[10px] font-black uppercase tracking-widest px-8 py-4 rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2 mx-auto"
+                className="mt-6 bg-navy text-primary text-[10px] font-black uppercase tracking-widest px-6 py-3 rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center gap-2 mx-auto"
               >
                 <span className="material-icons-round text-sm">language</span>
-                Open Smart Importer
+                Import Menu
               </button>
             </div>
           )}
