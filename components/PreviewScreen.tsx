@@ -3,9 +3,25 @@ import React, { useEffect, useState } from 'react';
 import { MenuItem } from '../types';
 import { getPairingRecommendation } from '../lib/gemini';
 
+declare global {
+  // Fix: Augmenting global JSX namespace
+  namespace JSX {
+    interface IntrinsicElements {
+      'model-viewer': any;
+    }
+  }
+  // Fix: Augmenting React's JSX namespace for broader compatibility
+  namespace React {
+    namespace JSX {
+      interface IntrinsicElements {
+        'model-viewer': any;
+      }
+    }
+  }
+}
+
 interface Props {
   item: MenuItem;
-  // Added menu prop to provide context for pairing logic
   menu: MenuItem[];
   onBack: () => void;
   onAR: () => void;
@@ -20,9 +36,7 @@ const PreviewScreen: React.FC<Props> = ({ item, menu, onBack, onAR, onAddToCart 
     const fetchTip = async () => {
       setLoadingTip(true);
       try {
-        // Fix: Added missing second argument 'menu' as required by getPairingRecommendation definition
         const tip = await getPairingRecommendation(item, menu);
-        // Fix: Extract the recommendation reason string from the returned JSON object
         setAiTip(tip?.reason || tip?.name || null);
       } catch (e) {
         console.error(e);
@@ -49,12 +63,26 @@ const PreviewScreen: React.FC<Props> = ({ item, menu, onBack, onAR, onAddToCart 
         </header>
 
         <div className="flex-1 relative flex items-center justify-center w-full">
-          <div className="relative z-10 w-80 h-80 animate-[float_6s_ease-in-out_infinite]">
-            <img src={item.image} alt={item.name} className="w-full h-full object-contain drop-shadow-[0_20px_50px_rgba(0,0,0,0.5)]" />
-          </div>
+          {item.modelUrl ? (
+            <div className="relative z-10 w-full h-80">
+              <model-viewer
+                src={item.modelUrl}
+                camera-controls
+                auto-rotate
+                shadow-intensity="1"
+                environment-image="neutral"
+                poster={item.image}
+                style={{ width: '100%', height: '100%' }}
+                className="w-full h-full"
+              />
+            </div>
+          ) : (
+            <div className="relative z-10 w-80 h-80 animate-[float_6s_ease-in-out_infinite]">
+              <img src={item.image} alt={item.name} className="w-full h-full object-contain drop-shadow-[0_20px_50px_rgba(0,0,0,0.5)]" />
+            </div>
+          )}
         </div>
 
-        {/* AI Pairing Recommendation */}
         <div className="px-6 mb-4">
           <div className="bg-navy/80 backdrop-blur-md border border-primary/30 rounded-2xl p-4 shadow-xl">
             <div className="flex items-center gap-2 mb-2">
@@ -78,7 +106,7 @@ const PreviewScreen: React.FC<Props> = ({ item, menu, onBack, onAR, onAddToCart 
               className="w-full bg-primary hover:bg-amber-500 text-slate-950 font-bold text-lg py-4 rounded-xl shadow-lg flex items-center justify-center gap-3 transition-all active:scale-[0.98]"
             >
               <span className="material-icons-round text-xl">view_in_ar</span>
-              View in AR
+              {item.modelUrl ? 'Place on Table' : 'View in AR'}
             </button>
             <button 
               onClick={() => onAddToCart(item)}

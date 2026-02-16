@@ -1,6 +1,23 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { MenuItem } from '../types';
+
+declare global {
+  // Fix: Augmenting global JSX namespace
+  namespace JSX {
+    interface IntrinsicElements {
+      'model-viewer': any;
+    }
+  }
+  // Fix: Augmenting React's JSX namespace for broader compatibility
+  namespace React {
+    namespace JSX {
+      interface IntrinsicElements {
+        'model-viewer': any;
+      }
+    }
+  }
+}
 
 interface Props {
   item: MenuItem;
@@ -9,6 +26,69 @@ interface Props {
 
 const ARScreen: React.FC<Props> = ({ item, onBack }) => {
   const [placed, setPlaced] = useState(false);
+  const modelRef = useRef<any>(null);
+
+  const handleEnterAR = () => {
+    if (modelRef.current?.activateAR) {
+      modelRef.current.activateAR();
+    }
+  };
+
+  if (item.modelUrl) {
+    return (
+      <div className="fixed inset-0 z-[100] bg-black overflow-hidden flex flex-col">
+        <model-viewer
+          ref={modelRef}
+          src={item.modelUrl}
+          ar
+          ar-modes="webxr scene-viewer quick-look"
+          camera-controls
+          auto-rotate
+          shadow-intensity="1"
+          environment-image="neutral"
+          ar-placement="floor"
+          style={{ width: '100%', height: '100%' }}
+          className="w-full h-full"
+        >
+          {/* Custom AR Button UI */}
+          <div className="absolute inset-x-0 bottom-12 flex justify-center z-50">
+             <button 
+              onClick={handleEnterAR}
+              className="bg-primary text-navy font-black px-10 py-5 rounded-2xl shadow-2xl flex items-center gap-3 active:scale-95 transition-transform"
+            >
+              <span className="material-icons-round">view_in_ar</span>
+              Place on Table
+            </button>
+          </div>
+        </model-viewer>
+
+        {/* HUD Controls */}
+        <div className="absolute top-12 left-6 z-[110]">
+          <button onClick={onBack} className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-xl border border-white/10 text-white flex items-center justify-center">
+            <span className="material-icons-round">arrow_back</span>
+          </button>
+        </div>
+
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-[110]">
+          <div className="flex items-center gap-2 bg-primary text-navy px-4 py-2 rounded-full shadow-lg">
+            <span className="material-icons-round text-sm animate-spin">psychology</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide">3D Preview Active</span>
+          </div>
+        </div>
+
+        <div className="absolute top-32 left-0 right-0 text-center px-6 z-[110]">
+           <p className="text-white/80 text-sm font-medium">Rotate and zoom to preview dish details</p>
+        </div>
+
+        {item.calories && (
+           <div className="absolute top-12 right-6 z-[110] bg-black/50 backdrop-blur-md rounded-xl px-4 py-2 border border-white/20 flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-white text-xs font-black">{item.calories} kcal</span>
+           </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[100] bg-black overflow-hidden flex flex-col">
@@ -44,10 +124,10 @@ const ARScreen: React.FC<Props> = ({ item, onBack }) => {
       <div className="relative z-50 flex flex-col justify-between h-full p-6 pt-12">
         <div className="flex items-start justify-between">
           <button onClick={onBack} className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-xl border border-white/10 text-white flex items-center justify-center">
-            <span className="material-icons">arrow_back</span>
+            <span className="material-icons-round">arrow_back</span>
           </button>
           <div className="flex items-center gap-2 bg-primary text-navy px-4 py-2 rounded-full shadow-lg">
-            <span className="material-icons text-sm animate-spin">view_in_ar</span>
+            <span className="material-icons-round text-sm animate-spin">view_in_ar</span>
             <span className="text-xs font-bold uppercase tracking-wide">AR Active</span>
           </div>
           <div className="w-12"></div>
@@ -56,7 +136,7 @@ const ARScreen: React.FC<Props> = ({ item, onBack }) => {
         <div className="flex flex-col items-center gap-8 mb-8">
           <div className="text-center">
             <p className="text-white font-medium text-lg tracking-wide flex items-center justify-center gap-2 shadow-sm">
-              <span className="material-icons text-primary text-xl">crop_free</span>
+              <span className="material-icons-round text-primary text-xl">crop_free</span>
               {placed ? 'Dish Placed' : 'Move phone to scan table'}
             </p>
             <p className="text-white/70 text-sm font-light">
@@ -66,7 +146,7 @@ const ARScreen: React.FC<Props> = ({ item, onBack }) => {
 
           <div className="flex items-center justify-center w-full relative">
             <button className="absolute left-4 w-12 h-12 rounded-full bg-black/30 backdrop-blur-md border border-white/10 flex items-center justify-center">
-              <span className="material-icons text-white/80">photo_library</span>
+              <span className="material-icons-round text-white/80">photo_library</span>
             </button>
             
             <button className="relative group p-1">
@@ -75,7 +155,7 @@ const ARScreen: React.FC<Props> = ({ item, onBack }) => {
             </button>
 
             <button className="absolute right-4 w-12 h-12 rounded-full bg-black/30 backdrop-blur-md border border-white/10 flex items-center justify-center">
-              <span className="material-icons text-white/80">flash_off</span>
+              <span className="material-icons-round text-white/80">flash_off</span>
             </button>
           </div>
         </div>

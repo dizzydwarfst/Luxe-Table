@@ -8,6 +8,7 @@ export interface MenuItem {
   price: number;
   category: 'Apps' | 'Salads' | 'Panfry' | 'Entree' | 'Ovens' | 'Bar';
   image: string;
+  modelUrl?: string;
   calories?: number;
   allergens?: string[];
 }

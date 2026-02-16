@@ -121,6 +121,17 @@ export const MENU_ITEMS: MenuItem[] = [
     calories: 720,
     allergens: ['Dairy']
   },
+  {
+    id: 'test-pizza',
+    name: 'Test Pizza',
+    description: 'Wood-fired margherita pizza with fresh basil and mozzarella.',
+    price: 19.00,
+    category: 'Ovens',
+    image: 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=400&q=80',
+    modelUrl: '/models/pizza.glb',
+    calories: 750,
+    allergens: ['Gluten', 'Dairy']
+  },
 
   // Bar Station
   {
