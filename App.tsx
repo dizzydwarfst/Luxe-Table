@@ -117,8 +117,10 @@ const App: React.FC = () => {
       {currentView === 'TRACKER' && (
         <TrackerScreen 
           items={cart}
+          menu={menu}
           onBack={() => setCurrentView('MENU')} 
           onAR={(item) => handleAR(item)}
+          onAddToCart={(item) => addToCart(item, true)}
         />
       )}
       
