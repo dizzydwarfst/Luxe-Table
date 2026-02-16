@@ -128,7 +128,7 @@ export const MENU_ITEMS: MenuItem[] = [
     price: 19.00,
     category: 'Ovens',
     image: 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=400&q=80',
-    modelUrl: '/models/pizza.glb',
+    modelUrl: 'https://github.com/dizzydwarfst/Luxe-Table/releases/download/v1/pizza.glb',
     calories: 750,
     allergens: ['Gluten', 'Dairy']
   },
