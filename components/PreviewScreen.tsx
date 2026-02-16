@@ -3,22 +3,8 @@ import React, { useEffect, useState } from 'react';
 import { MenuItem } from '../types';
 import { getPairingRecommendation } from '../lib/gemini';
 
-declare global {
-  // Fix: Augmenting global JSX namespace
-  namespace JSX {
-    interface IntrinsicElements {
-      'model-viewer': any;
-    }
-  }
-  // Fix: Augmenting React's JSX namespace for broader compatibility
-  namespace React {
-    namespace JSX {
-      interface IntrinsicElements {
-        'model-viewer': any;
-      }
-    }
-  }
-}
+// Use a constant for custom elements to avoid global JSX shadowing issues that block standard HTML tags
+const ModelViewer = 'model-viewer' as any;
 
 interface Props {
   item: MenuItem;
@@ -65,7 +51,7 @@ const PreviewScreen: React.FC<Props> = ({ item, menu, onBack, onAR, onAddToCart 
         <div className="flex-1 relative flex items-center justify-center w-full">
           {item.modelUrl ? (
             <div className="relative z-10 w-full h-80">
-              <model-viewer
+              <ModelViewer
                 src={item.modelUrl}
                 camera-controls
                 auto-rotate

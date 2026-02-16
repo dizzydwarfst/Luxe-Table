@@ -1,9 +1,19 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { MenuItem, ChatMessage } from "../types";
 import { MENU_ITEMS } from "../constants";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+let _ai: GoogleGenAI | null = null;
+
+const getAI = () => {
+  if (!_ai) {
+    const key = process.env.API_KEY;
+    if (!key) {
+      throw new Error("GEMINI_API_KEY is not set. AI features are unavailable.");
+    }
+    _ai = new GoogleGenAI({ apiKey: key });
+  }
+  return _ai;
+};
 
 const getMenuContext = (menu: MenuItem[]) => `Current Menu Items: ${JSON.stringify(menu.map(i => ({ id: i.id, name: i.name, category: i.category, description: i.description })))}`;
 
@@ -12,24 +22,25 @@ const getMenuContext = (menu: MenuItem[]) => `Current Menu Items: ${JSON.stringi
  * Added responseSchema as per guidelines for JSON responses.
  */
 export const getPairingRecommendation = async (item: MenuItem, currentMenu: MenuItem[]) => {
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `The user just added ${item.name} to their cart. Based on our menu: ${getMenuContext(currentMenu)}, suggest ONE specific complementary item (drink, side, or dessert) that pairs perfectly.`,
-    config: { 
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          name: { type: Type.STRING, description: "The name of the recommended item" },
-          reason: { type: Type.STRING, description: "Short explanation for the pairing" }
-        },
-        required: ["name", "reason"]
-      }
-    }
-  });
   try {
+    const response = await getAI().models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `The user just added ${item.name} to their cart. Based on our menu: ${getMenuContext(currentMenu)}, suggest ONE specific complementary item (drink, side, or dessert) that pairs perfectly.`,
+      config: { 
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING, description: "The name of the recommended item" },
+            reason: { type: Type.STRING, description: "Short explanation for the pairing" }
+          },
+          required: ["name", "reason"]
+        }
+      }
+    });
     return JSON.parse(response.text || '{}');
   } catch (e) {
+    console.error(e);
     return null;
   }
 };
@@ -39,28 +50,36 @@ export const getPairingRecommendation = async (item: MenuItem, currentMenu: Menu
  * Updated to return grounding sources to comply with Google Search requirements.
  */
 export const chatWithChef = async (history: ChatMessage[], message: string, currentMenu: MenuItem[]) => {
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
-    contents: `Conversation History: ${JSON.stringify(history)}. New message: ${message}`,
-    config: {
-      systemInstruction: `You are "The Best Chef", the elite AI culinary companion at LuxeTable. You are sophisticated, helpful, and passionate about food. You know the current menu inside out: ${getMenuContext(currentMenu)}. 
-      If users ask general culinary questions or about the restaurant's reputation, use your search tools. If they ask about specific dishes we have, be detailed about ingredients and taste.`,
-      tools: [{ googleSearch: {} }],
-      thinkingConfig: { thinkingBudget: 32768 }
-    }
-  });
-  
-  return {
-    text: response.text,
-    sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || []
-  };
+  try {
+    const response = await getAI().models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: `Conversation History: ${JSON.stringify(history)}. New message: ${message}`,
+      config: {
+        systemInstruction: `You are "The Best Chef", the elite AI culinary companion at LuxeTable. You are sophisticated, helpful, and passionate about food. You know the current menu inside out: ${getMenuContext(currentMenu)}. 
+        If users ask general culinary questions or about the restaurant's reputation, use your search tools. If they ask about specific dishes we have, be detailed about ingredients and taste.`,
+        tools: [{ googleSearch: {} }],
+        thinkingConfig: { thinkingBudget: 32768 }
+      }
+    });
+    
+    return {
+      text: response.text,
+      sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || []
+    };
+  } catch (e) {
+    console.error(e);
+    return {
+      text: "I'm sorry, the AI Chef is currently unavailable. Please try again later.",
+      sources: []
+    };
+  }
 };
 
 /**
  * AI logic for "Choose for Me" feature.
  */
 export const chooseForMe = async (preferences: any, currentMenu: MenuItem[]) => {
-  const response = await ai.models.generateContent({
+  const response = await getAI().models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `The user has these preferences: ${JSON.stringify(preferences)}. 
     Based on our menu: ${getMenuContext(currentMenu)}, recommend a perfect 3-course meal (Appetizer, Entree, and Side/Drink). 
@@ -96,7 +115,7 @@ export const chooseForMe = async (preferences: any, currentMenu: MenuItem[]) => 
  */
 export const scanMenuUrl = async (url: string) => {
   // STEP 1: Research the full menu using Google Search
-  const researchResponse = await ai.models.generateContent({
+  const researchResponse = await getAI().models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `You are the LuxeTable Research AI. Your task is to deeply research the restaurant at this URL: ${url}.
     Find EVERY menu item available, including:
@@ -119,7 +138,7 @@ export const scanMenuUrl = async (url: string) => {
   const sources = researchResponse.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
 
   // STEP 2: Parse the raw research text into structured JSON
-  const parseResponse = await ai.models.generateContent({
+  const parseResponse = await getAI().models.generateContent({
     model: 'gemini-3-pro-preview',
     contents: `You are the LuxeTable Categorization Specialist. Convert the following research text into a clean, structured JSON list of menu items.
     

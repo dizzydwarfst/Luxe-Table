@@ -2,22 +2,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { MenuItem } from '../types';
 
-declare global {
-  // Fix: Augmenting global JSX namespace
-  namespace JSX {
-    interface IntrinsicElements {
-      'model-viewer': any;
-    }
-  }
-  // Fix: Augmenting React's JSX namespace for broader compatibility
-  namespace React {
-    namespace JSX {
-      interface IntrinsicElements {
-        'model-viewer': any;
-      }
-    }
-  }
-}
+// Use a constant for custom elements to avoid global JSX shadowing issues that block standard HTML tags
+const ModelViewer = 'model-viewer' as any;
 
 interface Props {
   item: MenuItem;
@@ -37,7 +23,7 @@ const ARScreen: React.FC<Props> = ({ item, onBack }) => {
   if (item.modelUrl) {
     return (
       <div className="fixed inset-0 z-[100] bg-black overflow-hidden flex flex-col">
-        <model-viewer
+        <ModelViewer
           ref={modelRef}
           src={item.modelUrl}
           ar
@@ -60,7 +46,7 @@ const ARScreen: React.FC<Props> = ({ item, onBack }) => {
               Place on Table
             </button>
           </div>
-        </model-viewer>
+        </ModelViewer>
 
         {/* HUD Controls */}
         <div className="absolute top-12 left-6 z-[110]">
