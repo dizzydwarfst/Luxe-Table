@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { View, MenuItem, CartItem, DiningStation } from './types';
 import { MENU_ITEMS } from './constants';
@@ -119,9 +118,7 @@ const App: React.FC = () => {
         <TrackerScreen 
           items={cart}
           onBack={() => setCurrentView('MENU')} 
-          onAR={() => {
-              if (cart.length > 0) handleAR(cart[0]);
-          }}
+          onAR={(item) => handleAR(item)}
         />
       )}
       
@@ -180,8 +177,8 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Floating UI Elements */}
-      {currentView !== 'STATION' && currentView !== 'AR' && !isChatOpen && !isQuestionnaireOpen && !isImporterOpen && (
+      {/* Floating UI Elements - Hidden on TRACKER to avoid overlap */}
+      {currentView !== 'STATION' && currentView !== 'AR' && currentView !== 'TRACKER' && !isChatOpen && !isQuestionnaireOpen && !isImporterOpen && (
         <button 
           onClick={() => setIsChatOpen(true)}
           className="absolute right-6 bottom-32 z-50 bg-navy text-primary h-14 w-14 rounded-full flex items-center justify-center shadow-2xl shadow-navy/50 border-2 border-primary animate-float"
