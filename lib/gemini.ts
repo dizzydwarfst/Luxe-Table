@@ -90,64 +90,96 @@ export const chooseForMe = async (preferences: any, currentMenu: MenuItem[]) => 
 };
 
 /**
- * Sorting AI - Extracts and validates menu items from a URL.
- * Uses Google Search for cross-referencing and verification.
+ * Sorting AI - Extracts and validates menu items from a URL using a two-step process.
+ * Step 1: Research via Google Search grounding.
+ * Step 2: Strictly structured JSON parsing.
  */
 export const scanMenuUrl = async (url: string) => {
-  const response = await ai.models.generateContent({
+  // STEP 1: Research the full menu using Google Search
+  const researchResponse = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
-    contents: `You are the LuxeTable "Sorting AI". Your mission is to research the restaurant at this URL: ${url}.
+    contents: `You are the LuxeTable Research AI. Your task is to deeply research the restaurant at this URL: ${url}.
+    Find EVERY menu item available, including:
+    - Appetizers, starters, and shareables
+    - Salads and bowls
+    - Main courses, entrees, steaks, and seafood
+    - Pizza, burgers, sandwiches, and flatbreads
+    - Stir-fry, noodles, and wok dishes
+    - Full bar menu including cocktails, wine, beer, and non-alcoholic beverages
+    - Happy hour and dessert items
     
-    1. Deeply extract the full menu.
-    2. Act as a verification specialist: ensure item names, descriptions, and prices are accurate based on current search data.
-    3. Categorization Specialist: You MUST strictly map every item into one of these internal LuxeTable stations:
-       - Apps (Appetizers, starters, small plates)
-       - Salads (Leafy greens, vegetable bowls)
-       - Panfry (Sautéed items, noodles, stir-fry)
-       - Entree (Main courses, steaks, large plates)
-       - Ovens (Pizzas, roasted meats, baked dishes)
-       - Bar (Cocktails, wine, beer, spirits, non-alcoholic specialty drinks)
-    
-    Use Google Search to cross-reference multiple sources if the URL is limited.
-    
-    Output Format:
-    DATA| [Name] | [Rich Description] | [Price] | [Category] | [Estimated Calories] | [Common Allergens]`,
+    Ensure you find the exact names, descriptions, and current prices. For restaurant chains, look for location-specific menus if possible.`,
     config: {
       tools: [{ googleSearch: {} }],
       thinkingConfig: { thinkingBudget: 32768 }
     },
   });
 
-  const text = response.text || '';
-  const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-  
-  const lines = text.split('\n');
-  const items: Partial<MenuItem>[] = [];
-  
-  lines.forEach(line => {
-    if (line.trim().startsWith('DATA|')) {
-      const parts = line.split('|').map(p => p.trim());
-      if (parts.length >= 5) {
-        const price = parseFloat(parts[3].replace(/[^0-9.]/g, '')) || 0;
-        const calories = parts[5] ? parseInt(parts[5].replace(/\D/g, '')) : undefined;
-        const allergens = parts[6] ? parts[6].split(',').map(a => a.trim()).filter(a => a) : [];
-        
-        items.push({
-          id: `ext-${Math.random().toString(36).substr(2, 5)}`,
-          name: parts[1],
-          description: parts[2],
-          price: price,
-          category: (parts[4] as any) || 'Entree',
-          calories,
-          allergens,
-          image: `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=400&q=80`
-        });
-      }
+  const rawResearchText = researchResponse.text || '';
+  const sources = researchResponse.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+
+  // STEP 2: Parse the raw research text into structured JSON
+  const parseResponse = await ai.models.generateContent({
+    model: 'gemini-3-pro-preview',
+    contents: `You are the LuxeTable Categorization Specialist. Convert the following research text into a clean, structured JSON list of menu items.
+    
+    RESEARCH TEXT:
+    ${rawResearchText}
+    
+    STRICT CATEGORY MAPPING RULES:
+    - "Apps": Appetizers, starters, small plates, soups, dips, wings, spring rolls, bruschetta, charcuterie.
+    - "Salads": Any salad, poke bowl, grain bowl, vegetable-forward bowl.
+    - "Panfry": Stir-fry, noodles, pad thai, fried rice, sautéed dishes, tacos, curry, wok dishes, pasta (pan-cooked).
+    - "Entree": Steaks, ribs, chicken breast, fish fillet, lamb, main courses, larger protein-focused plates, seafood mains.
+    - "Ovens": Pizza, burgers, sandwiches, baked/roasted dishes, flatbreads, anything on a bun, baked pasta, casseroles.
+    - "Bar": ALL cocktails, wine, beer, spirits, mocktails, specialty drinks, non-alcoholic beverages, smoothies, fresh juices.
+    
+    Ensure item names are EXACT. If a price is missing, use 0.`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING },
+            description: { type: Type.STRING },
+            price: { type: Type.NUMBER },
+            category: { 
+              type: Type.STRING, 
+              enum: ["Apps", "Salads", "Panfry", "Entree", "Ovens", "Bar"] 
+            },
+            calories: { type: Type.INTEGER },
+            allergens: { 
+              type: Type.ARRAY, 
+              items: { type: Type.STRING } 
+            }
+          },
+          required: ["name", "description", "price", "category"]
+        }
+      },
+      thinkingConfig: { thinkingBudget: 32768 }
     }
   });
 
+  const items: Partial<MenuItem>[] = [];
+  try {
+    const parsedData = JSON.parse(parseResponse.text || '[]');
+    if (Array.isArray(parsedData)) {
+      parsedData.forEach((item: any) => {
+        items.push({
+          ...item,
+          id: `ext-${Math.random().toString(36).substr(2, 5)}`,
+          image: `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=400&q=80`
+        });
+      });
+    }
+  } catch (e) {
+    console.error("Failed to parse menu items JSON:", e);
+  }
+
   return {
     items,
-    sources: groundingChunks
+    sources
   };
 };
