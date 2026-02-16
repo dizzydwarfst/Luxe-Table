@@ -1,0 +1,7 @@
+{
+  "name": "LuxeTable: Live Dining Experience",
+  "description": "A high-end restaurant management and tracking application featuring AR food previews, real-time kitchen status, and smart menu selection.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
