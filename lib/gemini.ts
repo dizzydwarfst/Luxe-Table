@@ -24,7 +24,7 @@ const getMenuContext = (menu: MenuItem[]) => `Current Menu Items: ${JSON.stringi
 export const getPairingRecommendation = async (item: MenuItem, currentMenu: MenuItem[]) => {
   try {
     const response = await getAI().models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3-pro-preview',
       contents: `The user just added ${item.name} to their cart. Based on our menu: ${getMenuContext(currentMenu)}, suggest ONE specific complementary item (drink, side, or dessert) that pairs perfectly.`,
       config: { 
         responseMimeType: "application/json",
