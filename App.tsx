@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, MenuItem, CartItem, DiningStation } from './types';
+import { View, MenuItem, CartItem, DiningStation, Topping } from './types';
 import { MENU_ITEMS } from './constants';
 import StationSelectionScreen from './components/StationSelectionScreen';
 import MenuScreen from './components/MenuScreen';
@@ -19,6 +19,7 @@ const App: React.FC = () => {
   const [menu, setMenu] = useState<MenuItem[]>(MENU_ITEMS);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
+  const [selectedToppings, setSelectedToppings] = useState<Topping[]>([]);  // NEW
   const [orderConfirmed, setOrderConfirmed] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isQuestionnaireOpen, setIsQuestionnaireOpen] = useState(false);
@@ -30,20 +31,20 @@ const App: React.FC = () => {
     setCurrentView('MENU');
   };
 
-  const addToCart = async (item: MenuItem, skipSuggestion = false) => {
+  const addToCart = async (item: MenuItem, skipSuggestion = false, toppings: Topping[] = []) => {
     setCart(prev => {
       const existing = prev.find(i => i.id === item.id);
       if (existing) {
         return prev.map(i => i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i);
       }
-      return [...prev, { ...item, quantity: 1 }];
+      return [...prev, { ...item, quantity: 1, selectedToppings: toppings }];
     });
 
     if (!skipSuggestion && !orderConfirmed) {
       try {
         const suggestion = await getPairingRecommendation(item, menu);
         if (suggestion && suggestion.name) {
-          const suggestedItem = menu.find(m => m.name.toLowerCase().includes(suggestion.name.toLowerCase())) || 
+          const suggestedItem = menu.find(m => m.name.toLowerCase().includes(suggestion.name.toLowerCase())) ||
                                 menu.find(m => suggestion.name.toLowerCase().includes(m.name.toLowerCase()));
           if (suggestedItem && !cart.some(c => c.id === suggestedItem.id)) {
             setActiveSuggestion({ item: suggestedItem, reason: suggestion.reason });
@@ -67,11 +68,14 @@ const App: React.FC = () => {
 
   const handlePreview = (item: MenuItem) => {
     setSelectedItem(item);
+    setSelectedToppings([]);  // reset toppings on new preview
     setCurrentView('PREVIEW');
   };
 
-  const handleAR = (item: MenuItem) => {
+  // AR now receives toppings from PreviewScreen
+  const handleAR = (item: MenuItem, toppings: Topping[] = []) => {
     setSelectedItem(item);
+    setSelectedToppings(toppings);
     setCurrentView('AR');
   };
 
@@ -85,13 +89,13 @@ const App: React.FC = () => {
       {currentView === 'STATION' && (
         <StationSelectionScreen onSelect={handleStationSelect} />
       )}
-      
+
       {currentView === 'MENU' && (
-        <MenuScreen 
+        <MenuScreen
           menuItems={menu}
-          onAddToCart={addToCart} 
-          onPreview={handlePreview} 
-          onAR={handleAR}
+          onAddToCart={addToCart}
+          onPreview={handlePreview}
+          onAR={(item) => handleAR(item)}
           onViewCart={() => setCurrentView('CART')}
           onOpenQuestionnaire={() => setIsQuestionnaireOpen(true)}
           onOpenImporter={() => setIsImporterOpen(true)}
@@ -99,13 +103,13 @@ const App: React.FC = () => {
           stationName={selectedStation?.name || 'Main Dining'}
         />
       )}
-      
+
       {currentView === 'CART' && (
-        <CartScreen 
-          items={cart} 
+        <CartScreen
+          items={cart}
           menu={menu}
-          onUpdateQty={updateQuantity} 
-          onBack={() => setCurrentView('MENU')} 
+          onUpdateQty={updateQuantity}
+          onBack={() => setCurrentView('MENU')}
           onConfirm={() => {
             setOrderConfirmed(true);
             setCurrentView('TRACKER');
@@ -113,43 +117,44 @@ const App: React.FC = () => {
           onAddFromSuggestion={(item) => addToCart(item, true)}
         />
       )}
-      
+
       {currentView === 'TRACKER' && (
-        <TrackerScreen 
+        <TrackerScreen
           items={cart}
           menu={menu}
-          onBack={() => setCurrentView('MENU')} 
+          onBack={() => setCurrentView('MENU')}
           onAR={(item) => handleAR(item)}
           onAddToCart={(item) => addToCart(item, true)}
         />
       )}
-      
+
       {currentView === 'PREVIEW' && selectedItem && (
-        <PreviewScreen 
-          item={selectedItem} 
+        <PreviewScreen
+          item={selectedItem}
           menu={menu}
-          onBack={() => setCurrentView('MENU')} 
-          onAR={() => handleAR(selectedItem)}
-          onAddToCart={(item) => {
-              addToCart(item);
-              setCurrentView('MENU');
+          onBack={() => setCurrentView('MENU')}
+          onAR={(toppings) => handleAR(selectedItem, toppings)}
+          onAddToCart={(item, toppings) => {
+            addToCart(item, false, toppings);
+            setCurrentView('MENU');
           }}
         />
       )}
-      
+
       {currentView === 'AR' && selectedItem && (
-        <ARScreen 
-          item={selectedItem} 
+        <ARScreen
+          item={selectedItem}
+          selectedToppings={selectedToppings}
           onBack={() => {
-              if (orderConfirmed) setCurrentView('TRACKER');
-              else setCurrentView('PREVIEW');
-          }} 
+            if (orderConfirmed) setCurrentView('TRACKER');
+            else setCurrentView('PREVIEW');
+          }}
         />
       )}
 
-      {/* Overlays & Alerts */}
+      {/* Overlays */}
       {activeSuggestion && (
-        <ChefPairingToast 
+        <ChefPairingToast
           suggestion={activeSuggestion}
           onClose={() => setActiveSuggestion(null)}
           onAdd={() => {
@@ -160,28 +165,27 @@ const App: React.FC = () => {
       )}
 
       <AIChefChat isOpen={isChatOpen} menu={menu} onClose={() => setIsChatOpen(false)} />
-      
+
       {isQuestionnaireOpen && (
-        <Questionnaire 
+        <Questionnaire
           menuItems={menu}
-          onClose={() => setIsQuestionnaireOpen(false)} 
+          onClose={() => setIsQuestionnaireOpen(false)}
           onAddItems={(items) => {
             items.forEach(item => addToCart(item, true));
             setCurrentView('CART');
-          }} 
+          }}
         />
       )}
-      
+
       {isImporterOpen && (
-        <MenuImporter 
+        <MenuImporter
           onClose={() => setIsImporterOpen(false)}
           onImport={handleImport}
         />
       )}
 
-      {/* Floating UI Elements - Hidden on TRACKER to avoid overlap */}
       {currentView !== 'STATION' && currentView !== 'AR' && currentView !== 'TRACKER' && !isChatOpen && !isQuestionnaireOpen && !isImporterOpen && (
-        <button 
+        <button
           onClick={() => setIsChatOpen(true)}
           className="absolute right-6 bottom-32 z-50 bg-navy text-primary h-14 w-14 rounded-full flex items-center justify-center shadow-2xl shadow-navy/50 border-2 border-primary animate-float"
         >
@@ -189,17 +193,16 @@ const App: React.FC = () => {
         </button>
       )}
 
-      {/* Persistent Bottom Nav */}
       {(currentView === 'MENU' || (currentView === 'TRACKER' && orderConfirmed)) && (
         <nav className="absolute bottom-0 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-8 pt-3 px-6 flex justify-between items-center z-40 animate-slide-up">
-          <button 
+          <button
             onClick={() => setCurrentView('MENU')}
             className={`flex flex-col items-center gap-1 ${currentView === 'MENU' ? 'text-primary' : 'text-slate-400'}`}
           >
             <span className="material-icons-round text-xl">restaurant_menu</span>
             <span className="text-[10px] font-bold">Menu</span>
           </button>
-          
+
           <button onClick={() => setIsQuestionnaireOpen(true)} className="flex flex-col items-center gap-1 text-slate-400">
             <span className="material-icons-round text-xl">auto_awesome</span>
             <span className="text-[10px] font-medium">Choose</span>
@@ -216,7 +219,7 @@ const App: React.FC = () => {
             <span className="text-[10px] font-medium">Chef</span>
           </button>
 
-          <button 
+          <button
             onClick={() => orderConfirmed && setCurrentView('TRACKER')}
             className={`flex flex-col items-center gap-1 ${currentView === 'TRACKER' ? 'text-primary' : 'text-slate-400'} ${!orderConfirmed && 'opacity-30'}`}
           >

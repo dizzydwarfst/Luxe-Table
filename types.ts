@@ -1,5 +1,14 @@
-
 export type View = 'STATION' | 'MENU' | 'CART' | 'TRACKER' | 'PREVIEW' | 'AR';
+
+export interface Topping {
+  id: string;
+  name: string;
+  price: number;
+  modelUrl: string;
+  binaryBit: number; // Powers of 2: 1, 2, 4, 8, 16...
+  emoji: string;
+  color: string; // accent color for UI badge
+}
 
 export interface MenuItem {
   id: string;
@@ -11,10 +20,12 @@ export interface MenuItem {
   modelUrl?: string;
   calories?: number;
   allergens?: string[];
+  availableToppings?: Topping[];
 }
 
 export interface CartItem extends MenuItem {
   quantity: number;
+  selectedToppings?: Topping[];
 }
 
 export enum OrderStatus {

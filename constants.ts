@@ -130,8 +130,23 @@ export const MENU_ITEMS: MenuItem[] = [
     image: 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=400&q=80',
     modelUrl: '/pizza.glb',
     calories: 750,
-    allergens: ['Gluten', 'Dairy']
+    allergens: ['Gluten', 'Dairy'],
+    availableToppings: [
+      {
+        id: 'top-1',
+        name: 'Capicolla',
+        price: 2.50,
+        modelUrl: '/Capicolla.glb',
+        binaryBit: 1,     // binary: 001
+        emoji: '🥩',
+        color: '#e85d3a'
+      },
+      // Ready for future toppings — just uncomment and add glb files:
+      // { id: 'top-2', name: 'Mushrooms', price: 1.50, modelUrl: '/mushroom.glb', binaryBit: 2, emoji: '🍄', color: '#8B5E3C' },
+      // { id: 'top-3', name: 'Peppers',   price: 1.50, modelUrl: '/pepper.glb',   binaryBit: 4, emoji: '🫑', color: '#2d8a4e' },
+    ]
   },
+
 
   // Bar Station
   {
