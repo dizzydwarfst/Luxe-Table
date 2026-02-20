@@ -4,17 +4,17 @@ import { MenuItem, Topping } from '../types';
 
 interface Props {
   item: MenuItem;
-  allToppings: Topping[];
+  menu: MenuItem[];
   onAddToCart: (item: MenuItem, toppings: Topping[]) => void;
-  onViewInAR: (toppings: Topping[]) => void;
+  onAR: (toppings: Topping[]) => void;
   onBack: () => void;
 }
 
 const PreviewScreen: React.FC<Props> = ({
   item,
-  allToppings,
+  menu,
   onAddToCart,
-  onViewInAR,
+  onAR,
   onBack,
 }) => {
   const [selectedToppings, setSelectedToppings] = useState<Topping[]>([]);
@@ -42,6 +42,7 @@ const PreviewScreen: React.FC<Props> = ({
     setTimeout(() => setAdded(false), 1800);
   };
 
+  const allToppings = item.availableToppings ?? [];
   const totalPrice = item.price + selectedToppings.reduce((acc, t) => acc + (t.price ?? 0), 0);
 
   const getBinaryId = () => {
@@ -182,7 +183,7 @@ const PreviewScreen: React.FC<Props> = ({
         {/* Action buttons */}
         <div className="flex gap-3">
           <button
-            onClick={() => onViewInAR(selectedToppings)}
+            onClick={() => onAR(selectedToppings)}
             className="flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl bg-white/8 border border-white/10 text-white font-black text-sm uppercase tracking-wide active:scale-95 transition-all hover:bg-white/12"
           >
             <span className="material-icons-round text-primary">view_in_ar</span>
