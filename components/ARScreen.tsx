@@ -1,16 +1,42 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { MenuItem, Topping } from '../types';
 
-const ModelViewer = 'model-viewer' as any;
-
-// Spread toppings around the pizza in AR (offset from center in meters)
-const AR_TOPPING_OFFSETS = [
-  { x: -0.06, z: -0.06 },
-  { x:  0.07, z: -0.04 },
-  { x:  0.05, z:  0.07 },
-  { x: -0.07, z:  0.05 },
-  { x:  0.00, z: -0.08 },
+const TOPPING_SPOTS: [number, number][] = [
+  [ 0.00,  0.00],
+  [-0.06, -0.06],
+  [ 0.06, -0.05],
+  [ 0.06,  0.06],
+  [-0.05,  0.07],
+  [ 0.00, -0.09],
+  [ 0.09,  0.00],
 ];
+
+const FALLBACK_COLORS: Record<string, number> = {
+  default:  0xff6b35,
+  mushroom: 0x8B5E3C,
+  pepper:   0x2d8a4e,
+  olive:    0x1a1a2e,
+  basil:    0x2d8a4e,
+  cheese:   0xf5c518,
+  onion:    0xc084fc,
+  tomato:   0xef4444,
+};
+
+function makeFallbackMesh(topping: Topping): THREE.Mesh {
+  const colorKey = Object.keys(FALLBACK_COLORS).find(k =>
+    topping.name.toLowerCase().includes(k)
+  ) || 'default';
+  const geo = new THREE.SphereGeometry(0.018, 10, 10);
+  const mat = new THREE.MeshStandardMaterial({
+    color: FALLBACK_COLORS[colorKey], roughness: 0.5, metalness: 0.1,
+  });
+  return new THREE.Mesh(geo, mat);
+}
+
+type ARPhase = 'scanning' | 'placing' | 'placed';
 
 interface Props {
   item: MenuItem;
@@ -19,245 +45,479 @@ interface Props {
 }
 
 const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
-  const [placed, setPlaced] = useState(false);
-  const modelRef = useRef<any>(null);
+  const mountRef        = useRef<HTMLDivElement>(null);
+  const sceneRef        = useRef<THREE.Scene | null>(null);
+  const rendererRef     = useRef<THREE.WebGLRenderer | null>(null);
+  const cameraRef       = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef     = useRef<OrbitControls | null>(null);
+  const dishGroupRef    = useRef<THREE.Group | null>(null);
+  const toppingGroupRef = useRef<THREE.Group | null>(null);
+  const gridRef         = useRef<THREE.Group | null>(null);
+  const frameRef        = useRef<number>(0);
+  const [phase, setPhase]     = useState<ARPhase>('scanning');
+  const [showNutrition, setShowNutrition] = useState(false);
+  const phaseRef = useRef<ARPhase>('scanning');
 
-  const handleEnterAR = () => {
-    if (modelRef.current?.activateAR) {
-      modelRef.current.activateAR();
-    }
-  };
-
-  const getBinaryId = (): string | null => {
+  const getBinaryId = () => {
     const value = selectedToppings.reduce((acc, t) => acc + t.binaryBit, 0);
     if (value === 0) return null;
     const bits = Math.max(3, selectedToppings.length + 1);
     return value.toString(2).padStart(bits, '0');
   };
 
+  // ─── Scene setup ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!mountRef.current) return;
+    const el = mountRef.current;
+    const w  = el.clientWidth;
+    const h  = el.clientHeight;
+
+    // Renderer — transparent so we can show fake "camera" background
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+    renderer.toneMapping       = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    el.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    const scene = new THREE.Scene();
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(50, w / h, 0.01, 100);
+    camera.position.set(0, 0.55, 0.75);
+    camera.lookAt(0, 0, 0);
+    cameraRef.current = camera;
+
+    // ── Lighting (matches PizzaViewer exactly) ────────────────────────────────
+    scene.add(new THREE.HemisphereLight(0xfff5e0, 0x334466, 1.4));
+    const key = new THREE.DirectionalLight(0xfff0cc, 3.2);
+    key.position.set(2, 4, 3);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.bias = -0.001;
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xaaccff, 1.1);
+    fill.position.set(-3, 1, -2);
+    scene.add(fill);
+    scene.add(new THREE.DirectionalLight(0xffffff, 0.8)).position.set(0, -1, -4);
+    const pt = new THREE.PointLight(0xffddaa, 0.6, 2);
+    pt.position.set(0, -0.3, 0);
+    scene.add(pt);
+
+    // ── Table surface (shadow catcher) ────────────────────────────────────────
+    const tableMat = new THREE.MeshStandardMaterial({
+      color: 0x1a1a2e, roughness: 0.9, metalness: 0.0,
+      transparent: true, opacity: 0,
+    });
+    const table = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), tableMat);
+    table.rotation.x = -Math.PI / 2;
+    table.receiveShadow = true;
+    table.userData.isTable = true;
+    scene.add(table);
+
+    // ── Scanning grid ─────────────────────────────────────────────────────────
+    const gridGroup = new THREE.Group();
+    scene.add(gridGroup);
+    gridRef.current = gridGroup;
+
+    // Outer ring
+    const ringGeo = new THREE.RingGeometry(0.28, 0.30, 64);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xf2b90d, side: THREE.DoubleSide, transparent: true, opacity: 0.8,
+    });
+    gridGroup.add(new THREE.Mesh(ringGeo, ringMat));
+
+    // Inner cross lines
+    for (let angle = 0; angle < Math.PI; angle += Math.PI / 4) {
+      const pts = [
+        new THREE.Vector3(Math.cos(angle) * 0.28, 0, Math.sin(angle) * 0.28),
+        new THREE.Vector3(-Math.cos(angle) * 0.28, 0, -Math.sin(angle) * 0.28),
+      ];
+      const lineMat = new THREE.LineBasicMaterial({
+        color: 0xf2b90d, transparent: true, opacity: 0.4,
+      });
+      gridGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+    }
+
+    // Corner brackets
+    const bracketPts = (ox: number, oz: number) => {
+      const s = 0.06;
+      return [
+        new THREE.Vector3(ox + Math.sign(ox) * -s, 0, oz),
+        new THREE.Vector3(ox, 0, oz),
+        new THREE.Vector3(ox, 0, oz + Math.sign(oz) * -s),
+      ];
+    };
+    for (const [ox, oz] of [[-0.25,-0.25],[0.25,-0.25],[0.25,0.25],[-0.25,0.25]]) {
+      const bMat = new THREE.LineBasicMaterial({ color: 0xf2b90d, transparent: true, opacity: 0.9 });
+      gridGroup.add(new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(bracketPts(ox, oz)), bMat
+      ));
+    }
+    gridGroup.rotation.x = -Math.PI / 2;
+    gridGroup.position.y = 0.001;
+
+    // ── Dish group (hidden until placed) ─────────────────────────────────────
+    const dishGroup   = new THREE.Group();
+    dishGroup.visible = false;
+    dishGroup.scale.setScalar(0);
+    scene.add(dishGroup);
+    dishGroupRef.current = dishGroup;
+
+    const toppingGroup = new THREE.Group();
+    dishGroup.add(toppingGroup);
+    toppingGroupRef.current = toppingGroup;
+
+    // ── Controls ──────────────────────────────────────────────────────────────
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enablePan    = false;
+    controls.enableZoom   = true;
+    controls.autoRotate   = false;
+    controls.minPolarAngle = Math.PI / 8;
+    controls.maxPolarAngle = Math.PI / 2.2;
+    controls.minDistance  = 0.3;
+    controls.maxDistance  = 1.4;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.enabled = false; // disabled until placed
+    controlsRef.current = controls;
+
+    // ── Animate ───────────────────────────────────────────────────────────────
+    const animate = () => {
+      frameRef.current = requestAnimationFrame(animate);
+
+      // Pulse / rotate scan grid
+      if (phaseRef.current === 'scanning') {
+        gridGroup.rotation.z += 0.008;
+        const pulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.003);
+        gridGroup.children.forEach(c => {
+          const m = (c as any).material;
+          if (m) m.opacity = m.opacity * 0.9 + pulse * m.opacity * 0.1;
+        });
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const onResize = () => {
+      if (!mountRef.current) return;
+      const w2 = mountRef.current.clientWidth;
+      const h2 = mountRef.current.clientHeight;
+      camera.aspect = w2 / h2;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w2, h2);
+    };
+    window.addEventListener('resize', onResize);
+
+    // Auto-advance scanning → placing after 2s
+    const scanTimer = setTimeout(() => {
+      phaseRef.current = 'placing';
+      setPhase('placing');
+    }, 2000);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      clearTimeout(scanTimer);
+      cancelAnimationFrame(frameRef.current);
+      renderer.dispose();
+      if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  // ─── Load pizza model once scene is ready ────────────────────────────────
+  useEffect(() => {
+    const dishGroup = dishGroupRef.current;
+    if (!dishGroup || !item.modelUrl) return;
+
+    const loader = new GLTFLoader();
+    loader.load(item.modelUrl, (gltf) => {
+      const model = gltf.scene;
+      model.traverse(child => {
+        if ((child as THREE.Mesh).isMesh) {
+          child.castShadow    = true;
+          child.receiveShadow = true;
+        }
+      });
+      const box   = new THREE.Box3().setFromObject(model);
+      const size  = box.getSize(new THREE.Vector3());
+      const scale = 0.34 / Math.max(size.x, size.y, size.z);
+      model.scale.setScalar(scale);
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.sub(center.multiplyScalar(scale));
+      // Insert before toppingGroup
+      dishGroup.add(model);
+    });
+  }, [item.modelUrl]);
+
+  // ─── Load toppings (same logic as PizzaViewer — key to parity) ───────────
+  useEffect(() => {
+    const toppingGroup = toppingGroupRef.current;
+    if (!toppingGroup) return;
+
+    while (toppingGroup.children.length) {
+      const child = toppingGroup.children[0] as THREE.Mesh;
+      if (child.geometry) child.geometry.dispose();
+      toppingGroup.remove(child);
+    }
+    if (selectedToppings.length === 0) return;
+
+    const loader = new GLTFLoader();
+    const baseY  = 0.015;
+
+    selectedToppings.forEach((topping, ti) => {
+      const onLoaded = (obj: THREE.Object3D) => {
+        const box   = new THREE.Box3().setFromObject(obj);
+        const size  = box.getSize(new THREE.Vector3());
+        const scale = 0.036 / Math.max(size.x, size.y, size.z);
+        obj.scale.setScalar(scale);
+
+        TOPPING_SPOTS.forEach(([x, z], i) => {
+          const clone = obj.clone(true);
+          clone.traverse(c => { if ((c as THREE.Mesh).isMesh) c.castShadow = true; });
+          const cBox    = new THREE.Box3().setFromObject(clone);
+          const ch      = cBox.getSize(new THREE.Vector3()).y;
+          const targetY = baseY + ch * 0.5;
+          const startY  = targetY + 0.3;
+          clone.position.set(
+            x - cBox.getCenter(new THREE.Vector3()).x * scale,
+            startY,
+            z - cBox.getCenter(new THREE.Vector3()).z * scale,
+          );
+          clone.rotation.y = ((ti * 7 + i) * 1.3) % (Math.PI * 2);
+          clone.userData.baseY = targetY;
+          toppingGroup.add(clone);
+
+          const delay    = (ti * 7 + i) * 70;
+          const duration = 520;
+          const start    = performance.now() + delay;
+          const drop = () => {
+            const now = performance.now();
+            if (now < start) { requestAnimationFrame(drop); return; }
+            const t   = Math.min((now - start) / duration, 1);
+            const overshoot = 1.5;
+            const eased = t < 0.5
+              ? 4 * t * t * t
+              : 1 + (overshoot + 1) * Math.pow(t - 1, 3) + overshoot * Math.pow(t - 1, 2);
+            clone.position.y = startY + (targetY - startY) * Math.min(eased, 1);
+            clone.rotation.y += 0.08 * (1 - t);
+            if (t < 1) requestAnimationFrame(drop);
+          };
+          requestAnimationFrame(drop);
+        });
+      };
+
+      if (topping.modelUrl) {
+        loader.load(topping.modelUrl, (gltf) => onLoaded(gltf.scene), undefined,
+          () => onLoaded(makeFallbackMesh(topping)));
+      } else {
+        onLoaded(makeFallbackMesh(topping));
+      }
+    });
+  }, [selectedToppings]);
+
+  // ─── Place dish on tap ────────────────────────────────────────────────────
+  const handlePlace = () => {
+    if (phase !== 'placing') return;
+    const dishGroup = dishGroupRef.current;
+    const gridRef_  = gridRef.current;
+    const controls  = controlsRef.current;
+    const scene     = sceneRef.current;
+    if (!dishGroup || !gridRef_ || !controls || !scene) return;
+
+    phaseRef.current = 'placed';
+    setPhase('placed');
+    controls.enabled  = true;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 1.2;
+    dishGroup.visible = true;
+
+    // Fade out grid
+    const fadeDuration = 400;
+    const fadeStart    = performance.now();
+    const fadeGrid = () => {
+      const t = Math.min((performance.now() - fadeStart) / fadeDuration, 1);
+      gridRef_.children.forEach(c => {
+        const m = (c as any).material;
+        if (m) m.opacity = (1 - t) * m.opacity;
+      });
+      if (t < 1) requestAnimationFrame(fadeGrid);
+      else scene.remove(gridRef_);
+    };
+    requestAnimationFrame(fadeGrid);
+
+    // Fade in table surface
+    scene.traverse(c => {
+      if (c.userData.isTable) {
+        const m = (c as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        const start = performance.now();
+        const fade = () => {
+          const t = Math.min((performance.now() - start) / 500, 1);
+          m.opacity = t * 0.15;
+          if (t < 1) requestAnimationFrame(fade);
+        };
+        requestAnimationFrame(fade);
+      }
+    });
+
+    // Pop-in scale animation
+    const popDuration = 600;
+    const popStart    = performance.now();
+    const popIn = () => {
+      const t     = Math.min((performance.now() - popStart) / popDuration, 1);
+      const eased = t < 0.5
+        ? 4 * t * t * t
+        : 1 + 2.2 * Math.pow(t - 1, 3) + 2.2 * Math.pow(t - 1, 2); // overshoot
+      dishGroup.scale.setScalar(Math.max(0, eased));
+      if (t < 1) requestAnimationFrame(popIn);
+    };
+    requestAnimationFrame(popIn);
+  };
+
   const binaryId = getBinaryId();
 
-  // --- Real 3D model path (uses model-viewer's AR) ---
-  if (item.modelUrl) {
-    return (
-      <div className="fixed inset-0 z-[100] bg-black overflow-hidden flex flex-col">
-        {/* Base pizza model-viewer with AR */}
-        <ModelViewer
-          ref={modelRef}
-          src={item.modelUrl}
-          ar
-          ar-modes="webxr scene-viewer quick-look"
-          camera-controls
-          auto-rotate
-          shadow-intensity="1"
-          environment-image="neutral"
-          ar-placement="floor"
-          style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
+  return (
+    <div className="fixed inset-0 z-[100] overflow-hidden flex flex-col" style={{ background: '#0a0a14' }}>
+
+      {/* ── Fake camera background ─────────────────────────────────────── */}
+      <div className="absolute inset-0 z-0 overflow-hidden">
+        {/* Simulated room environment */}
+        <div className="absolute inset-0" style={{
+          background: 'radial-gradient(ellipse at 50% 70%, #1a1a2e 0%, #0d0d1a 60%, #050508 100%)',
+        }}/>
+        {/* Subtle floor grid perspective */}
+        <div className="absolute inset-0 opacity-10" style={{
+          backgroundImage: `
+            linear-gradient(rgba(242,185,13,0.3) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(242,185,13,0.3) 1px, transparent 1px)
+          `,
+          backgroundSize: '60px 60px',
+          transform: 'perspective(400px) rotateX(55deg) translateY(30%)',
+          transformOrigin: '50% 100%',
+        }}/>
+        {/* Ambient glow on "table" */}
+        <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 w-80 h-24 rounded-full opacity-20"
+          style={{ background: 'radial-gradient(ellipse, #f2b90d 0%, transparent 70%)', filter: 'blur(20px)' }}
         />
+      </div>
 
-        {/* Topping model-viewers overlaid in preview (not in real AR session — WebXR limitation) */}
-        {selectedToppings.map((topping, ti) =>
-          AR_TOPPING_OFFSETS.slice(0, 5).map((offset, i) => (
-            <div
-              key={`${topping.id}-ar-${i}`}
-              className="absolute pointer-events-none"
-              style={{
-                bottom: `${38 + (i * 3)}%`,
-                left: `${30 + (ti * 12) + (i * 8)}%`,
-                width: '60px',
-                height: '60px',
-                animation: `toppingDrop 0.6s cubic-bezier(0.22,1,0.36,1) ${(ti * 5 + i) * 60}ms both`,
-                zIndex: 20 + i,
-              }}
-            >
-              <ModelViewer
-                src={topping.modelUrl}
-                auto-rotate
-                rotation-per-second="30deg"
-                shadow-intensity="0.4"
-                environment-image="neutral"
-                style={{ width: '100%', height: '100%' }}
-              />
+      {/* ── Three.js canvas ────────────────────────────────────────────── */}
+      <div
+        ref={mountRef}
+        className="absolute inset-0 z-10"
+        onClick={handlePlace}
+        style={{ cursor: phase === 'placing' ? 'crosshair' : 'default' }}
+      />
+
+      {/* ── Phase overlays ─────────────────────────────────────────────── */}
+      {phase === 'scanning' && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-end pb-40 pointer-events-none">
+          <div className="flex items-center gap-3 bg-black/60 backdrop-blur-md border border-primary/40 px-6 py-3 rounded-2xl">
+            <div className="w-2 h-2 rounded-full bg-primary animate-ping"/>
+            <span className="text-primary font-bold text-sm uppercase tracking-widest">Scanning Surface...</span>
+          </div>
+          <p className="text-white/40 text-xs mt-3 font-medium">Point at a flat surface</p>
+        </div>
+      )}
+
+      {phase === 'placing' && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-end pb-40 pointer-events-none">
+          <div className="flex flex-col items-center gap-3">
+            <div className="flex items-center gap-3 bg-primary/90 backdrop-blur-md px-6 py-3 rounded-2xl shadow-xl shadow-primary/30">
+              <span className="material-icons-round text-navy text-xl">touch_app</span>
+              <span className="text-navy font-black text-sm uppercase tracking-widest">Tap to Place Dish</span>
             </div>
-          ))
-        )}
-
-        {/* AR Place Button */}
-        <div className="absolute inset-x-0 bottom-12 flex justify-center z-50">
-          <button
-            onClick={handleEnterAR}
-            className="bg-primary text-navy font-black px-10 py-5 rounded-2xl shadow-2xl flex items-center gap-3 active:scale-95 transition-transform"
-          >
-            <span className="material-icons-round">view_in_ar</span>
-            Place on Table
-          </button>
+            <p className="text-white/40 text-xs font-medium">Surface detected ✓</p>
+          </div>
         </div>
+      )}
 
-        {/* HUD */}
-        <div className="absolute top-12 left-6 z-[110]">
-          <button onClick={onBack} className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-xl border border-white/10 text-white flex items-center justify-center">
-            <span className="material-icons-round">arrow_back</span>
-          </button>
-        </div>
+      {/* ── HUD ─────────────────────────────────────────────────────────── */}
+      <div className="absolute top-0 left-0 right-0 z-30 pt-12 px-6 flex items-start justify-between pointer-events-none">
+        <button
+          onClick={onBack}
+          className="pointer-events-auto w-12 h-12 rounded-full bg-black/50 backdrop-blur-xl border border-white/10 text-white flex items-center justify-center active:scale-90 transition-transform"
+        >
+          <span className="material-icons-round">arrow_back</span>
+        </button>
 
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-[110] flex items-center gap-2">
+        <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-2 bg-primary text-navy px-4 py-2 rounded-full shadow-lg">
-            <span className="material-icons-round text-sm animate-spin">psychology</span>
-            <span className="text-[10px] font-bold uppercase tracking-wide">3D Preview Active</span>
+            <span className="material-icons-round text-sm">view_in_ar</span>
+            <span className="text-[10px] font-black uppercase tracking-wide">AR Live</span>
           </div>
           {binaryId && (
-            <div className="bg-black/70 backdrop-blur-md border border-primary/40 px-3 py-2 rounded-full">
+            <div className="bg-black/70 backdrop-blur-md border border-primary/40 px-3 py-1.5 rounded-full">
               <span className="font-mono text-primary text-[10px] font-black">#{binaryId}</span>
             </div>
           )}
         </div>
-
-        {selectedToppings.length > 0 && (
-          <div className="absolute top-28 left-0 right-0 flex justify-center gap-2 z-[110] px-6 flex-wrap">
-            {selectedToppings.map(t => (
-              <div key={t.id} className="bg-black/60 backdrop-blur-md border border-white/10 rounded-full px-3 py-1 flex items-center gap-1.5">
-                <span>{t.emoji}</span>
-                <span className="text-white text-[10px] font-bold">{t.name}</span>
-                <span className="font-mono text-[8px] text-primary/70">{t.binaryBit.toString(2).padStart(3,'0')}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {item.calories && (
-          <div className="absolute top-12 right-6 z-[110] bg-black/50 backdrop-blur-md rounded-xl px-4 py-2 border border-white/20 flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-white text-xs font-black">{item.calories} kcal</span>
-          </div>
-        )}
-
-        <style>{`
-          @keyframes toppingDrop {
-            0%   { opacity:0; transform: translateY(-80px) rotate(-20deg) scale(0.2); }
-            60%  { opacity:1; transform: translateY(8px)   rotate(5deg)  scale(1.08); }
-            100% { opacity:1; transform: translateY(0)     rotate(0deg)  scale(1);    }
-          }
-        `}</style>
-      </div>
-    );
-  }
-
-  // --- Simulated AR (no .glb file) ---
-  return (
-    <div className="fixed inset-0 z-[100] bg-black overflow-hidden flex flex-col">
-      <div
-        className="absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: `url('https://lh3.googleusercontent.com/aida-public/AB6AXuBjkxCF-eaqfkL72GvDVqmHAFVOyVzpi8sgQuzlyE6s8YA2vmeLfT0jFUfoK_h0Lk4b4Nx4w6VWQ875A0UTtLoHCZr-wSMEMYEfMixbe0BQZDAWuv4XgxUJNVdNNd1I4Se6P4zAPuWSaZS1UXbPL5WzffD1NZacwJZIaF5ldCmvbQ4vMcEewhds6dWUqTp4_PjhHv4xx5KoKoIRaSrI-GRGQxiBUbk9R5xujiJbPcN0MuY6hbGd6zAXDKxf9mjUEeJdLU_0AFhmDow-')` }}
-      >
-        <div className="absolute inset-0 bg-black/30"></div>
       </div>
 
-      {/* Base item */}
-      <div
-        onClick={() => setPlaced(true)}
-        className={`absolute inset-0 flex items-center justify-center transition-all duration-700 ${placed ? 'scale-100' : 'scale-90 opacity-60'}`}
-      >
-        <div className="relative w-72 h-72 animate-[arFloat_5s_ease-in-out_infinite]">
-          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-48 h-12 bg-black/40 blur-2xl rounded-[100%] scale-x-150"></div>
-          <img src={item.image} alt={item.name} className="w-full h-full object-contain drop-shadow-2xl relative z-10" />
-
-          {/* Topping emoji overlays for simulated AR */}
-          {placed && selectedToppings.map((topping, ti) =>
-            AR_TOPPING_OFFSETS.slice(0, 5).map((_, i) => (
-              <div
-                key={`${topping.id}-sim-${i}`}
-                className="absolute text-2xl"
-                style={{
-                  top: `${25 + (i * 12)}%`,
-                  left: `${15 + (ti * 20) + (i * 10)}%`,
-                  animation: `toppingDrop 0.6s cubic-bezier(0.22,1,0.36,1) ${(ti * 5 + i) * 80}ms both`,
-                  zIndex: 20,
-                  filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.5))',
-                }}
-              >
-                {topping.emoji}
-              </div>
-            ))
-          )}
-
-          {/* Binary + calorie badge */}
-          <div className="absolute -top-4 -right-4 flex flex-col gap-1 z-30">
-            {binaryId && (
-              <div className="bg-primary/90 backdrop-blur-md rounded-lg px-3 py-1 border border-primary/30 flex items-center gap-1">
-                <span className="font-mono text-navy text-xs font-black">#{binaryId}</span>
-              </div>
-            )}
-            <div className="bg-black/50 backdrop-blur-md rounded-lg px-3 py-1 border border-white/20 flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-              <span className="text-white text-xs font-black">{item.calories || 450} kcal</span>
+      {/* ── Toppings bar ─────────────────────────────────────────────────── */}
+      {selectedToppings.length > 0 && phase === 'placed' && (
+        <div className="absolute top-28 left-0 right-0 z-30 flex justify-center gap-2 px-6 flex-wrap pointer-events-none">
+          {selectedToppings.map(t => (
+            <div key={t.id} className="bg-black/60 backdrop-blur-md border border-white/10 rounded-full px-3 py-1 flex items-center gap-1.5">
+              <span>{t.emoji}</span>
+              <span className="text-white text-[10px] font-bold">{t.name}</span>
+              <span className="font-mono text-[8px] text-primary/70">{t.binaryBit.toString(2).padStart(3,'0')}</span>
             </div>
-          </div>
+          ))}
         </div>
-      </div>
+      )}
 
-      {/* HUD */}
-      <div className="relative z-50 flex flex-col justify-between h-full p-6 pt-12">
-        <div className="flex items-start justify-between">
-          <button onClick={onBack} className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-xl border border-white/10 text-white flex items-center justify-center">
-            <span className="material-icons-round">arrow_back</span>
+      {/* ── Nutrition overlay ────────────────────────────────────────────── */}
+      {phase === 'placed' && (
+        <div className="absolute bottom-32 right-4 z-30">
+          <button
+            onClick={() => setShowNutrition(v => !v)}
+            className="bg-black/60 backdrop-blur-md border border-white/10 rounded-2xl p-3 text-white flex items-center gap-2 active:scale-95 transition-transform"
+          >
+            <span className="material-icons-round text-primary text-lg">info</span>
+            {!showNutrition && <span className="text-[10px] font-bold text-white/70">Nutrition</span>}
           </button>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 bg-primary text-navy px-4 py-2 rounded-full shadow-lg">
-              <span className="material-icons-round text-sm animate-spin">view_in_ar</span>
-              <span className="text-xs font-bold uppercase tracking-wide">AR Active</span>
-            </div>
-          </div>
-          <div className="w-12"></div>
-        </div>
 
-        {selectedToppings.length > 0 && (
-          <div className="flex justify-center gap-2 flex-wrap">
-            {selectedToppings.map(t => (
-              <div key={t.id} className="bg-black/60 backdrop-blur-md border border-white/10 rounded-full px-3 py-1 flex items-center gap-1.5">
-                <span>{t.emoji}</span>
-                <span className="text-white text-[10px] font-bold">{t.name}</span>
+          {showNutrition && (
+            <div className="absolute bottom-14 right-0 w-52 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl p-4 animate-fade-in">
+              <p className="text-[10px] font-black text-primary uppercase tracking-widest mb-3">Nutritional Info</p>
+              <div className="space-y-2">
+                {[
+                  { label: 'Calories', value: `${(item.calories ?? 750) + selectedToppings.length * 45} kcal`, color: 'text-yellow-400' },
+                  { label: 'Protein',  value: '24g',  color: 'text-blue-400' },
+                  { label: 'Carbs',    value: '68g',  color: 'text-orange-400' },
+                  { label: 'Fat',      value: '18g',  color: 'text-red-400' },
+                ].map(row => (
+                  <div key={row.label} className="flex justify-between items-center">
+                    <span className="text-white/60 text-[10px]">{row.label}</span>
+                    <span className={`${row.color} text-[11px] font-black`}>{row.value}</span>
+                  </div>
+                ))}
+                {selectedToppings.length > 0 && (
+                  <p className="text-[8px] text-white/30 mt-2 pt-2 border-t border-white/10">
+                    +{selectedToppings.length} topping{selectedToppings.length > 1 ? 's' : ''} included
+                  </p>
+                )}
               </div>
-            ))}
-          </div>
-        )}
-
-        <div className="flex flex-col items-center gap-8 mb-8">
-          <div className="text-center">
-            <p className="text-white font-medium text-lg tracking-wide flex items-center justify-center gap-2">
-              <span className="material-icons-round text-primary text-xl">crop_free</span>
-              {placed ? 'Pizza Placed!' : 'Tap to place pizza'}
-            </p>
-            <p className="text-white/70 text-sm font-light">
-              {placed ? 'Toppings are live in AR' : 'Move phone to scan surface'}
-            </p>
-          </div>
-
-          <div className="flex items-center justify-center w-full relative">
-            <button className="absolute left-4 w-12 h-12 rounded-full bg-black/30 backdrop-blur-md border border-white/10 flex items-center justify-center">
-              <span className="material-icons-round text-white/80">photo_library</span>
-            </button>
-            <button className="relative group p-1">
-              <div className="w-20 h-20 rounded-full border-4 border-white/30 group-active:border-primary/50 transition-all"></div>
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-primary rounded-full shadow-lg active:scale-90 transition-all"></div>
-            </button>
-            <button className="absolute right-4 w-12 h-12 rounded-full bg-black/30 backdrop-blur-md border border-white/10 flex items-center justify-center">
-              <span className="material-icons-round text-white/80">flash_off</span>
-            </button>
-          </div>
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
-      <style>{`
-        @keyframes arFloat {
-          0%, 100% { transform: translateY(0) rotate(0); }
-          50%       { transform: translateY(-10px) rotate(2deg); }
-        }
-        @keyframes toppingDrop {
-          0%   { opacity:0; transform: translateY(-60px) scale(0.3); }
-          60%  { opacity:1; transform: translateY(6px)  scale(1.1); }
-          100% { opacity:1; transform: translateY(0)    scale(1);   }
-        }
-      `}</style>
+      {/* ── Item name + calories ─────────────────────────────────────────── */}
+      {phase === 'placed' && (
+        <div className="absolute top-12 right-6 z-30 bg-black/50 backdrop-blur-md rounded-xl px-4 py-2 border border-white/10 flex items-center gap-2">
+          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"/>
+          <span className="text-white text-xs font-black">
+            {(item.calories ?? 750) + selectedToppings.length * 45} kcal
+          </span>
+        </div>
+      )}
     </div>
   );
 };
