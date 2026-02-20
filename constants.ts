@@ -1,5 +1,8 @@
 import { Topping } from './types';
 
+// Menu categories — matches MenuItem['category'] union type
+export const CATEGORIES = ['Apps', 'Salads', 'Panfry', 'Entree', 'Ovens', 'Bar'] as const;
+
 // Each topping gets a unique power of 2 so any combination maps to a unique binary ID
 // e.g. mushroom (1) + pepper (4) + olive (8) = 13 = binary 001101
 export const TOPPINGS: Topping[] = [
