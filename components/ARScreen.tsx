@@ -46,6 +46,7 @@ interface Props {
 
 const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
   const mountRef        = useRef<HTMLDivElement>(null);
+  const videoRef        = useRef<HTMLVideoElement>(null);
   const sceneRef        = useRef<THREE.Scene | null>(null);
   const rendererRef     = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef       = useRef<THREE.PerspectiveCamera | null>(null);
@@ -54,8 +55,11 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
   const toppingGroupRef = useRef<THREE.Group | null>(null);
   const gridRef         = useRef<THREE.Group | null>(null);
   const frameRef        = useRef<number>(0);
-  const [phase, setPhase]     = useState<ARPhase>('scanning');
+  const streamRef       = useRef<MediaStream | null>(null);
+
+  const [phase, setPhase]             = useState<ARPhase>('scanning');
   const [showNutrition, setShowNutrition] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const phaseRef = useRef<ARPhase>('scanning');
 
   const getBinaryId = () => {
@@ -65,6 +69,51 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     return value.toString(2).padStart(bits, '0');
   };
 
+  // ─── Camera setup ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+
+    const startCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },  // rear camera preferred
+            width:  { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+        }
+      } catch (err: any) {
+        console.warn('Camera access failed:', err);
+        setCameraError(err.name === 'NotAllowedError'
+          ? 'Camera permission denied. Grant access to use AR.'
+          : 'Camera not available on this device.');
+      }
+    };
+
+    startCamera();
+
+    return () => {
+      cancelled = true;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
   // ─── Scene setup ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mountRef.current) return;
@@ -72,8 +121,9 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     const w  = el.clientWidth;
     const h  = el.clientHeight;
 
-    // Renderer — transparent so we can show fake "camera" background
+    // Renderer — transparent so the camera video shows through
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setClearColor(0x000000, 0); // fully transparent
     renderer.setSize(w, h);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -92,7 +142,7 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
-    // ── Lighting (matches PizzaViewer exactly) ────────────────────────────────
+    // ── Lighting ──────────────────────────────────────────────────────────────
     scene.add(new THREE.HemisphereLight(0xfff5e0, 0x334466, 1.4));
     const key = new THREE.DirectionalLight(0xfff0cc, 3.2);
     key.position.set(2, 4, 3);
@@ -103,7 +153,9 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     const fill = new THREE.DirectionalLight(0xaaccff, 1.1);
     fill.position.set(-3, 1, -2);
     scene.add(fill);
-    scene.add(new THREE.DirectionalLight(0xffffff, 0.8)).position.set(0, -1, -4);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.8);
+    rim.position.set(0, -1, -4);
+    scene.add(rim);
     const pt = new THREE.PointLight(0xffddaa, 0.6, 2);
     pt.position.set(0, -0.3, 0);
     scene.add(pt);
@@ -124,14 +176,12 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     scene.add(gridGroup);
     gridRef.current = gridGroup;
 
-    // Outer ring
     const ringGeo = new THREE.RingGeometry(0.28, 0.30, 64);
     const ringMat = new THREE.MeshBasicMaterial({
       color: 0xf2b90d, side: THREE.DoubleSide, transparent: true, opacity: 0.8,
     });
     gridGroup.add(new THREE.Mesh(ringGeo, ringMat));
 
-    // Inner cross lines
     for (let angle = 0; angle < Math.PI; angle += Math.PI / 4) {
       const pts = [
         new THREE.Vector3(Math.cos(angle) * 0.28, 0, Math.sin(angle) * 0.28),
@@ -143,7 +193,6 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
       gridGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
     }
 
-    // Corner brackets
     const bracketPts = (ox: number, oz: number) => {
       const s = 0.06;
       return [
@@ -161,10 +210,10 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     gridGroup.rotation.x = -Math.PI / 2;
     gridGroup.position.y = 0.001;
 
-    // ── Dish group (hidden until placed) ─────────────────────────────────────
+    // ── Dish group (hidden until placed) ──────────────────────────────────────
     const dishGroup   = new THREE.Group();
     dishGroup.visible = false;
-    dishGroup.scale.setScalar(0);
+    dishGroup.scale.setScalar(0.001); // start near-zero, not exactly 0 (avoids NaN)
     scene.add(dishGroup);
     dishGroupRef.current = dishGroup;
 
@@ -183,20 +232,21 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     controls.maxDistance  = 1.4;
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.enabled = false; // disabled until placed
+    controls.enabled = false;
     controlsRef.current = controls;
 
     // ── Animate ───────────────────────────────────────────────────────────────
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
 
-      // Pulse / rotate scan grid
       if (phaseRef.current === 'scanning') {
         gridGroup.rotation.z += 0.008;
         const pulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.003);
         gridGroup.children.forEach(c => {
           const m = (c as any).material;
-          if (m) m.opacity = m.opacity * 0.9 + pulse * m.opacity * 0.1;
+          if (m && m.opacity !== undefined) {
+            m.opacity = Math.min(1, pulse * 0.9);
+          }
         });
       }
 
@@ -230,7 +280,7 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     };
   }, []);
 
-  // ─── Load pizza model once scene is ready ────────────────────────────────
+  // ─── Load dish model ────────────────────────────────────────────────────────
   useEffect(() => {
     const dishGroup = dishGroupRef.current;
     if (!dishGroup || !item.modelUrl) return;
@@ -246,16 +296,16 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
       });
       const box   = new THREE.Box3().setFromObject(model);
       const size  = box.getSize(new THREE.Vector3());
-      const scale = 0.34 / Math.max(size.x, size.y, size.z);
+      // Larger scale for AR so the dish is clearly visible on-screen
+      const scale = 0.5 / Math.max(size.x, size.y, size.z);
       model.scale.setScalar(scale);
       const center = box.getCenter(new THREE.Vector3());
       model.position.sub(center.multiplyScalar(scale));
-      // Insert before toppingGroup
       dishGroup.add(model);
     });
   }, [item.modelUrl]);
 
-  // ─── Load toppings (same logic as PizzaViewer — key to parity) ───────────
+  // ─── Load toppings ──────────────────────────────────────────────────────────
   useEffect(() => {
     const toppingGroup = toppingGroupRef.current;
     if (!toppingGroup) return;
@@ -332,7 +382,7 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
 
     phaseRef.current = 'placed';
     setPhase('placed');
-    controls.enabled  = true;
+    controls.enabled    = true;
     controls.autoRotate = true;
     controls.autoRotateSpeed = 1.2;
     dishGroup.visible = true;
@@ -344,14 +394,14 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
       const t = Math.min((performance.now() - fadeStart) / fadeDuration, 1);
       gridRef_.children.forEach(c => {
         const m = (c as any).material;
-        if (m) m.opacity = (1 - t) * m.opacity;
+        if (m && m.opacity !== undefined) m.opacity = (1 - t) * 0.8;
       });
       if (t < 1) requestAnimationFrame(fadeGrid);
       else scene.remove(gridRef_);
     };
     requestAnimationFrame(fadeGrid);
 
-    // Fade in table surface
+    // Fade in table shadow surface
     scene.traverse(c => {
       if (c.userData.isTable) {
         const m = (c as THREE.Mesh).material as THREE.MeshStandardMaterial;
@@ -365,16 +415,19 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
       }
     });
 
-    // Pop-in scale animation
-    const popDuration = 600;
+    // Pop-in scale animation — target scale 1.0 (full size)
+    const popDuration = 700;
     const popStart    = performance.now();
     const popIn = () => {
       const t     = Math.min((performance.now() - popStart) / popDuration, 1);
+      // Smooth overshoot easing for a satisfying pop
       const eased = t < 0.5
         ? 4 * t * t * t
-        : 1 + 2.2 * Math.pow(t - 1, 3) + 2.2 * Math.pow(t - 1, 2); // overshoot
-      dishGroup.scale.setScalar(Math.max(0, eased));
+        : 1 + 2.5 * Math.pow(t - 1, 3) + 2.5 * Math.pow(t - 1, 2);
+      const s = Math.max(0.001, eased);
+      dishGroup.scale.setScalar(s);
       if (t < 1) requestAnimationFrame(popIn);
+      else dishGroup.scale.setScalar(1); // ensure we land exactly at 1
     };
     requestAnimationFrame(popIn);
   };
@@ -382,31 +435,48 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
   const binaryId = getBinaryId();
 
   return (
-    <div className="fixed inset-0 z-[100] overflow-hidden flex flex-col" style={{ background: '#0a0a14' }}>
+    <div className="fixed inset-0 z-[100] overflow-hidden flex flex-col" style={{ background: '#000' }}>
 
-      {/* ── Fake camera background ─────────────────────────────────────── */}
-      <div className="absolute inset-0 z-0 overflow-hidden">
-        {/* Simulated room environment */}
-        <div className="absolute inset-0" style={{
-          background: 'radial-gradient(ellipse at 50% 70%, #1a1a2e 0%, #0d0d1a 60%, #050508 100%)',
-        }}/>
-        {/* Subtle floor grid perspective */}
-        <div className="absolute inset-0 opacity-10" style={{
-          backgroundImage: `
-            linear-gradient(rgba(242,185,13,0.3) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(242,185,13,0.3) 1px, transparent 1px)
-          `,
-          backgroundSize: '60px 60px',
-          transform: 'perspective(400px) rotateX(55deg) translateY(30%)',
-          transformOrigin: '50% 100%',
-        }}/>
-        {/* Ambient glow on "table" */}
-        <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 w-80 h-24 rounded-full opacity-20"
-          style={{ background: 'radial-gradient(ellipse, #f2b90d 0%, transparent 70%)', filter: 'blur(20px)' }}
-        />
-      </div>
+      {/* ── Live Camera Feed ───────────────────────────────────────────── */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="absolute inset-0 w-full h-full object-cover z-0"
+        style={{ transform: 'scaleX(1)' }}
+      />
 
-      {/* ── Three.js canvas ────────────────────────────────────────────── */}
+      {/* Fallback background when camera is unavailable */}
+      {cameraError && (
+        <div className="absolute inset-0 z-0 overflow-hidden">
+          <div className="absolute inset-0" style={{
+            background: 'radial-gradient(ellipse at 50% 70%, #1a1a2e 0%, #0d0d1a 60%, #050508 100%)',
+          }}/>
+          <div className="absolute inset-0 opacity-10" style={{
+            backgroundImage: `
+              linear-gradient(rgba(242,185,13,0.3) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(242,185,13,0.3) 1px, transparent 1px)
+            `,
+            backgroundSize: '60px 60px',
+            transform: 'perspective(400px) rotateX(55deg) translateY(30%)',
+            transformOrigin: '50% 100%',
+          }}/>
+          <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 w-80 h-24 rounded-full opacity-20"
+            style={{ background: 'radial-gradient(ellipse, #f2b90d 0%, transparent 70%)', filter: 'blur(20px)' }}
+          />
+          {/* Camera error notice */}
+          <div className="absolute top-32 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur-md border border-red-500/40 px-5 py-3 rounded-2xl z-50 max-w-[80%]">
+            <div className="flex items-center gap-2">
+              <span className="material-icons-round text-red-400 text-sm">videocam_off</span>
+              <span className="text-red-300 text-xs font-bold">{cameraError}</span>
+            </div>
+            <p className="text-white/40 text-[10px] mt-1">Using simulated environment instead.</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Three.js canvas (transparent, overlays camera) ─────────────── */}
       <div
         ref={mountRef}
         className="absolute inset-0 z-10"
