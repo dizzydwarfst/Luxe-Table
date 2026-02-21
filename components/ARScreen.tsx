@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { MenuItem, Topping } from '../types';
 import { generateToppingPlacements } from '../lib/toppingPlacement';
+import { playSizzle, playPop } from '../lib/sounds';
 
 const FALLBACK_COLORS: Record<string, number> = {
   default:  0xff6b35,
@@ -358,6 +359,7 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
             clone.position.y = startY + (targetY - startY) * Math.min(eased, 1);
             clone.rotation.y = spot.rotation + 0.08 * (1 - t) * 6;
             if (t < 1) requestAnimationFrame(drop);
+            else if (i === 0) playPop(); // 🔊 Pop when first clone of each topping lands
           };
           requestAnimationFrame(drop);
         });
@@ -383,6 +385,9 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
 
     phaseRef.current = 'placed';
     setPhase('placed');
+
+    // 🔊 Sizzle sound on dish placement
+    playSizzle();
     controls.enabled    = true;
     controls.autoRotate = true;
     controls.autoRotateSpeed = 1.2;

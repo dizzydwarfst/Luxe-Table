@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Topping } from '../types';
 import { generateToppingPlacements } from '../lib/toppingPlacement';
+import { playPop } from '../lib/sounds';
 
 // Procedural fallback shapes when no .glb is available
 const FALLBACK_COLORS: Record<string, number> = {
@@ -283,6 +284,7 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
             clone.position.y = startY + (targetY - startY) * Math.min(eased, 1);
             clone.rotation.y = spot.rotation + 0.08 * (1 - t) * 6;
             if (t < 1) requestAnimationFrame(drop);
+            else if (i === 0) playPop(); // 🔊 Pop when first clone of each topping lands
           };
           requestAnimationFrame(drop);
         });

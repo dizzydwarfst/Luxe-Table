@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, MenuItem, CartItem, DiningStation, Topping } from './types';
 import { MENU_ITEMS } from './constants';
 import StationSelectionScreen from './components/StationSelectionScreen';
@@ -11,7 +11,11 @@ import AIChefChat from './components/AIChefChat';
 import Questionnaire from './components/Questionnaire';
 import MenuImporter from './components/MenuImporter';
 import ChefPairingToast from './components/ChefPairingToast';
+import PageTransition from './components/PageTransition';
+import OrderTracker from './components/OrderTracker';
+import SplitBillCalculator from './components/SplitBillCalculator';
 import { getPairingRecommendation } from './lib/gemini';
+import { playDing, playPop, playSizzle, playWhoosh, playSuccess } from './lib/sounds';
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>('STATION');
@@ -19,19 +23,33 @@ const App: React.FC = () => {
   const [menu, setMenu] = useState<MenuItem[]>(MENU_ITEMS);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
-  const [selectedToppings, setSelectedToppings] = useState<Topping[]>([]);  // NEW
+  const [selectedToppings, setSelectedToppings] = useState<Topping[]>([]);
   const [orderConfirmed, setOrderConfirmed] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isQuestionnaireOpen, setIsQuestionnaireOpen] = useState(false);
   const [isImporterOpen, setIsImporterOpen] = useState(false);
   const [activeSuggestion, setActiveSuggestion] = useState<{item: MenuItem, reason: string} | null>(null);
 
+  // ─── New feature state ──────────────────────────────────────────────
+  const [showOrderTracker, setShowOrderTracker] = useState(false);
+  const [showSplitBill, setShowSplitBill] = useState(false);
+  const [orderId] = useState(() => `ORD-${Date.now().toString(36).toUpperCase()}`);
+
+  // ─── Navigate with sound ────────────────────────────────────────────
+  const navigateTo = useCallback((view: View) => {
+    playWhoosh();
+    setCurrentView(view);
+  }, []);
+
   const handleStationSelect = (station: DiningStation) => {
     setSelectedStation(station);
-    setCurrentView('MENU');
+    navigateTo('MENU');
   };
 
   const addToCart = async (item: MenuItem, skipSuggestion = false, toppings: Topping[] = []) => {
+    // 🔊 Sound: ding on add-to-cart
+    playDing();
+
     setCart(prev => {
       const existing = prev.find(i => i.id === item.id);
       if (existing) {
@@ -57,6 +75,9 @@ const App: React.FC = () => {
   };
 
   const updateQuantity = (id: string, delta: number) => {
+    // 🔊 Sound: pop on quantity change
+    playPop();
+
     setCart(prev => prev.map(i => {
       if (i.id === id) {
         const newQty = Math.max(0, i.quantity + delta);
@@ -68,15 +89,23 @@ const App: React.FC = () => {
 
   const handlePreview = (item: MenuItem) => {
     setSelectedItem(item);
-    setSelectedToppings([]);  // reset toppings on new preview
-    setCurrentView('PREVIEW');
+    setSelectedToppings([]);
+    navigateTo('PREVIEW');
   };
 
-  // AR now receives toppings from PreviewScreen
   const handleAR = (item: MenuItem, toppings: Topping[] = []) => {
     setSelectedItem(item);
     setSelectedToppings(toppings);
-    setCurrentView('AR');
+    // 🔊 Sound: sizzle plays inside ARScreen on dish placement
+    navigateTo('AR');
+  };
+
+  const handleConfirmOrder = () => {
+    // 🔊 Sound: success chime on order confirmation
+    playSuccess();
+    setOrderConfirmed(true);
+    setShowOrderTracker(true);
+    navigateTo('TRACKER');
   };
 
   const handleImport = (newItems: MenuItem[]) => {
@@ -84,75 +113,103 @@ const App: React.FC = () => {
     setIsImporterOpen(false);
   };
 
+  // Determine transition direction based on view change
+  const getTransitionDirection = (): 'left' | 'right' | 'up' | 'fade' => {
+    if (currentView === 'CART' || currentView === 'PREVIEW') return 'left';
+    if (currentView === 'AR') return 'up';
+    return 'fade';
+  };
+
   return (
     <div className="flex flex-col h-screen w-full max-w-md mx-auto bg-white dark:bg-slate-950 overflow-hidden relative shadow-2xl font-display">
-      {currentView === 'STATION' && (
-        <StationSelectionScreen onSelect={handleStationSelect} />
-      )}
 
-      {currentView === 'MENU' && (
-        <MenuScreen
-          menuItems={menu}
-          onAddToCart={addToCart}
-          onPreview={handlePreview}
-          onAR={(item) => handleAR(item)}
-          onViewCart={() => setCurrentView('CART')}
-          onOpenQuestionnaire={() => setIsQuestionnaireOpen(true)}
-          onOpenImporter={() => setIsImporterOpen(true)}
-          cartCount={cart.reduce((acc, i) => acc + i.quantity, 0)}
-          stationName={selectedStation?.name || 'Main Dining'}
+      {/* ─── Page Transition Wrapper ─────────────────────────────────── */}
+      <PageTransition
+        viewKey={currentView}
+        direction={getTransitionDirection()}
+        duration={300}
+      >
+        {currentView === 'STATION' && (
+          <StationSelectionScreen onSelect={handleStationSelect} />
+        )}
+
+        {currentView === 'MENU' && (
+          <MenuScreen
+            menuItems={menu}
+            onAddToCart={addToCart}
+            onPreview={handlePreview}
+            onAR={(item) => handleAR(item)}
+            onViewCart={() => navigateTo('CART')}
+            onOpenQuestionnaire={() => setIsQuestionnaireOpen(true)}
+            onOpenImporter={() => setIsImporterOpen(true)}
+            cartCount={cart.reduce((acc, i) => acc + i.quantity, 0)}
+            stationName={selectedStation?.name || 'Main Dining'}
+          />
+        )}
+
+        {currentView === 'CART' && (
+          <CartScreen
+            items={cart}
+            menu={menu}
+            onUpdateQty={updateQuantity}
+            onBack={() => navigateTo('MENU')}
+            onConfirm={handleConfirmOrder}
+            onAddFromSuggestion={(item) => addToCart(item, true)}
+          />
+        )}
+
+        {currentView === 'TRACKER' && (
+          <TrackerScreen
+            items={cart}
+            menu={menu}
+            onBack={() => navigateTo('MENU')}
+            onAR={(item) => handleAR(item)}
+            onAddToCart={(item) => addToCart(item, true)}
+          />
+        )}
+
+        {currentView === 'PREVIEW' && selectedItem && (
+          <PreviewScreen
+            item={selectedItem}
+            menu={menu}
+            onBack={() => navigateTo('MENU')}
+            onAR={(toppings) => handleAR(selectedItem, toppings)}
+            onAddToCart={(item, toppings) => {
+              addToCart(item, false, toppings);
+              navigateTo('MENU');
+            }}
+          />
+        )}
+
+        {currentView === 'AR' && selectedItem && (
+          <ARScreen
+            item={selectedItem}
+            selectedToppings={selectedToppings}
+            onBack={() => {
+              if (orderConfirmed) navigateTo('TRACKER');
+              else navigateTo('PREVIEW');
+            }}
+          />
+        )}
+      </PageTransition>
+
+      {/* ─── Order Tracker Overlay ──────────────────────────────────── */}
+      {showOrderTracker && orderConfirmed && (
+        <OrderTracker
+          orderId={orderId}
+          onClose={() => setShowOrderTracker(false)}
         />
       )}
 
-      {currentView === 'CART' && (
-        <CartScreen
+      {/* ─── Split Bill Calculator Overlay ──────────────────────────── */}
+      {showSplitBill && (
+        <SplitBillCalculator
           items={cart}
-          menu={menu}
-          onUpdateQty={updateQuantity}
-          onBack={() => setCurrentView('MENU')}
-          onConfirm={() => {
-            setOrderConfirmed(true);
-            setCurrentView('TRACKER');
-          }}
-          onAddFromSuggestion={(item) => addToCart(item, true)}
+          onClose={() => setShowSplitBill(false)}
         />
       )}
 
-      {currentView === 'TRACKER' && (
-        <TrackerScreen
-          items={cart}
-          menu={menu}
-          onBack={() => setCurrentView('MENU')}
-          onAR={(item) => handleAR(item)}
-          onAddToCart={(item) => addToCart(item, true)}
-        />
-      )}
-
-      {currentView === 'PREVIEW' && selectedItem && (
-        <PreviewScreen
-          item={selectedItem}
-          menu={menu}
-          onBack={() => setCurrentView('MENU')}
-          onAR={(toppings) => handleAR(selectedItem, toppings)}
-          onAddToCart={(item, toppings) => {
-            addToCart(item, false, toppings);
-            setCurrentView('MENU');
-          }}
-        />
-      )}
-
-      {currentView === 'AR' && selectedItem && (
-        <ARScreen
-          item={selectedItem}
-          selectedToppings={selectedToppings}
-          onBack={() => {
-            if (orderConfirmed) setCurrentView('TRACKER');
-            else setCurrentView('PREVIEW');
-          }}
-        />
-      )}
-
-      {/* Overlays */}
+      {/* ─── Existing Overlays ─────────────────────────────────────── */}
       {activeSuggestion && (
         <ChefPairingToast
           suggestion={activeSuggestion}
@@ -172,7 +229,7 @@ const App: React.FC = () => {
           onClose={() => setIsQuestionnaireOpen(false)}
           onAddItems={(items) => {
             items.forEach(item => addToCart(item, true));
-            setCurrentView('CART');
+            navigateTo('CART');
           }}
         />
       )}
@@ -184,6 +241,7 @@ const App: React.FC = () => {
         />
       )}
 
+      {/* ─── AI Chef FAB ───────────────────────────────────────────── */}
       {currentView !== 'STATION' && currentView !== 'AR' && currentView !== 'TRACKER' && !isChatOpen && !isQuestionnaireOpen && !isImporterOpen && (
         <button
           onClick={() => setIsChatOpen(true)}
@@ -193,10 +251,11 @@ const App: React.FC = () => {
         </button>
       )}
 
+      {/* ─── Bottom Navigation ─────────────────────────────────────── */}
       {(currentView === 'MENU' || (currentView === 'TRACKER' && orderConfirmed)) && (
         <nav className="absolute bottom-0 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-8 pt-3 px-6 flex justify-between items-center z-40 animate-slide-up">
           <button
-            onClick={() => setCurrentView('MENU')}
+            onClick={() => navigateTo('MENU')}
             className={`flex flex-col items-center gap-1 ${currentView === 'MENU' ? 'text-primary' : 'text-slate-400'}`}
           >
             <span className="material-icons-round text-xl">restaurant_menu</span>
@@ -220,13 +279,40 @@ const App: React.FC = () => {
           </button>
 
           <button
-            onClick={() => orderConfirmed && setCurrentView('TRACKER')}
+            onClick={() => {
+              if (orderConfirmed) {
+                navigateTo('TRACKER');
+              }
+            }}
             className={`flex flex-col items-center gap-1 ${currentView === 'TRACKER' ? 'text-primary' : 'text-slate-400'} ${!orderConfirmed && 'opacity-30'}`}
           >
             <span className="material-icons-round text-xl">timer</span>
             <span className="text-[10px] font-bold">Status</span>
           </button>
         </nav>
+      )}
+
+      {/* ─── Tracker screen action buttons ─────────────────────────── */}
+      {currentView === 'TRACKER' && orderConfirmed && (
+        <div className="absolute bottom-24 left-0 right-0 z-30 flex justify-center gap-3 px-6">
+          {/* Live order tracking button */}
+          <button
+            onClick={() => setShowOrderTracker(true)}
+            className="flex items-center gap-2 bg-navy text-white px-5 py-3 rounded-2xl shadow-xl active:scale-95 transition-transform"
+          >
+            <span className="material-icons-round text-primary text-lg">wifi</span>
+            <span className="text-xs font-black uppercase tracking-wide">Live Track</span>
+          </button>
+
+          {/* Split bill button */}
+          <button
+            onClick={() => setShowSplitBill(true)}
+            className="flex items-center gap-2 bg-white dark:bg-slate-800 text-navy dark:text-white px-5 py-3 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 active:scale-95 transition-transform"
+          >
+            <span className="material-icons-round text-primary text-lg">group</span>
+            <span className="text-xs font-black uppercase tracking-wide">Split Bill</span>
+          </button>
+        </div>
       )}
     </div>
   );
