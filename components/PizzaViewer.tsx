@@ -1,19 +1,9 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Topping } from '../types';
-
-// Where each topping sits on the pizza surface
-const TOPPING_SPOTS: [number, number][] = [
-  [ 0.00,  0.00],
-  [-0.06, -0.06],
-  [ 0.06, -0.05],
-  [ 0.06,  0.06],
-  [-0.05,  0.07],
-  [ 0.00, -0.09],
-  [ 0.09,  0.00],
-];
+import { generateToppingPlacements } from '../lib/toppingPlacement';
 
 // Procedural fallback shapes when no .glb is available
 const FALLBACK_COLORS: Record<string, number> = {
@@ -40,12 +30,12 @@ function makeFallbackMesh(topping: Topping): THREE.Mesh {
   return new THREE.Mesh(geo, mat);
 }
 
-// Exploded layer config — rendered under/over the pizza to show cross-section
+// Exploded layer config
 interface LayerConfig {
   label: string;
   color: number;
-  y: number;        // rest position
-  explodeY: number; // target when exploded
+  y: number;
+  explodeY: number;
   radius: number;
   height: number;
 }
@@ -82,7 +72,6 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
     const w  = el.clientWidth;
     const h  = el.clientHeight;
 
-    // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(w, h);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -94,21 +83,17 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
     el.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // Scene
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // Camera
     const camera = new THREE.PerspectiveCamera(42, w / h, 0.01, 100);
     camera.position.set(0, 0.28, 0.48);
     cameraRef.current = camera;
 
     // ── Lighting ──────────────────────────────────────────────────────────────
-    // Hemisphere — sky/ground ambient
     const hemi = new THREE.HemisphereLight(0xfff5e0, 0x334466, 1.4);
     scene.add(hemi);
 
-    // Key light — warm overhead
     const key = new THREE.DirectionalLight(0xfff0cc, 3.2);
     key.position.set(2, 4, 3);
     key.castShadow = true;
@@ -120,17 +105,14 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
     key.shadow.bias = -0.001;
     scene.add(key);
 
-    // Fill light — cool opposite side
     const fill = new THREE.DirectionalLight(0xaaccff, 1.1);
     fill.position.set(-3, 1, -2);
     scene.add(fill);
 
-    // Rim light — back highlight
     const rim = new THREE.DirectionalLight(0xffffff, 0.8);
     rim.position.set(0, -1, -4);
     scene.add(rim);
 
-    // Subtle point light below for reflection
     const bottom = new THREE.PointLight(0xffddaa, 0.6, 2);
     bottom.position.set(0, -0.3, 0);
     scene.add(bottom);
@@ -226,7 +208,7 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
     };
   }, [pizzaUrl]);
 
-  // ─── Toppings ────────────────────────────────────────────────────────────────
+  // ─── Toppings — random non-overlapping placement ─────────────────────────────
   useEffect(() => {
     const toppingGroup = toppingGroupRef.current;
     if (!toppingGroup) return;
@@ -239,44 +221,53 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
     }
     if (selectedToppings.length === 0) return;
 
-    const loader   = new GLTFLoader();
-    const spots    = TOPPING_SPOTS.slice(0, 7);
-    const baseY    = 0.015;
+    const placements = generateToppingPlacements(selectedToppings);
+    const loader     = new GLTFLoader();
+    const baseY      = 0.015;
 
-    selectedToppings.forEach((topping, ti) => {
+    // Group placements by topping id so we load each model once
+    const byTopping = new Map<string, typeof placements>();
+    for (const p of placements) {
+      const arr = byTopping.get(p.topping.id) || [];
+      arr.push(p);
+      byTopping.set(p.topping.id, arr);
+    }
+
+    byTopping.forEach((spots, _toppingId) => {
+      const topping = spots[0].topping;
+
       const onLoaded = (obj: THREE.Object3D) => {
         const box   = new THREE.Box3().setFromObject(obj);
         const size  = box.getSize(new THREE.Vector3());
         const scale = 0.036 / Math.max(size.x, size.y, size.z);
         obj.scale.setScalar(scale);
 
-        spots.forEach(([ x, z ], i) => {
+        spots.forEach((spot, i) => {
           const clone = obj.clone(true);
           clone.traverse(c => {
-            if ((c as THREE.Mesh).isMesh) {
-              c.castShadow = true;
-            }
+            if ((c as THREE.Mesh).isMesh) c.castShadow = true;
           });
+
           const cloneBox = new THREE.Box3().setFromObject(clone);
           const ch       = cloneBox.getSize(new THREE.Vector3()).y;
           const targetY  = baseY + ch * 0.5;
           const startY   = targetY + 0.3;
 
           clone.position.set(
-            x - cloneBox.getCenter(new THREE.Vector3()).x * scale,
+            spot.x - cloneBox.getCenter(new THREE.Vector3()).x * scale,
             startY,
-            z - cloneBox.getCenter(new THREE.Vector3()).z * scale,
+            spot.z - cloneBox.getCenter(new THREE.Vector3()).z * scale,
           );
-          clone.rotation.y = ((ti * 7 + i) * 1.3) % (Math.PI * 2);
+          clone.rotation.y = spot.rotation;
 
-          // Store target for explode
-          clone.userData.baseY    = targetY;
-          clone.userData.toppingIndex = ti;
-          clone.userData.spotIndex    = i;
+          clone.userData.baseY        = targetY;
+          clone.userData.toppingIndex = spot.toppingIndex;
+          clone.userData.spotIndex    = spot.spotIndex;
           toppingGroup.add(clone);
 
           // Bouncy drop animation
-          const delay    = (ti * 7 + i) * 70;
+          const globalIndex = spot.toppingIndex * 6 + i;
+          const delay    = globalIndex * 70;
           const duration = 520;
           const start    = performance.now() + delay;
 
@@ -285,14 +276,12 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
             if (now < start) { requestAnimationFrame(drop); return; }
             const elapsed = now - start;
             const t       = Math.min(elapsed / duration, 1);
-            // Overshoot bounce easing
             const overshoot = 1.5;
             const eased = t < 0.5
               ? 4 * t * t * t
               : 1 + (overshoot + 1) * Math.pow(t - 1, 3) + overshoot * Math.pow(t - 1, 2);
             clone.position.y = startY + (targetY - startY) * Math.min(eased, 1);
-            // Spin while falling
-            clone.rotation.y += 0.08 * (1 - t);
+            clone.rotation.y = spot.rotation + 0.08 * (1 - t) * 6;
             if (t < 1) requestAnimationFrame(drop);
           };
           requestAnimationFrame(drop);
@@ -304,7 +293,7 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
           topping.modelUrl,
           (gltf) => onLoaded(gltf.scene),
           undefined,
-          () => { onLoaded(makeFallbackMesh(topping)); }
+          () => onLoaded(makeFallbackMesh(topping)),
         );
       } else {
         onLoaded(makeFallbackMesh(topping));
@@ -323,23 +312,20 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
     const duration = 700;
     const startTime = performance.now();
 
-    // Snapshot starting positions
-    const layerStarts  = layerGroup.children.map(c => c.position.y);
+    const layerStarts   = layerGroup.children.map(c => c.position.y);
     const toppingStarts = toppingGroup.children.map(c => c.position.y);
-    const pizzaStart   = pizzaGroup.position.y;
+    const pizzaStart    = pizzaGroup.position.y;
 
     const animateExplode = () => {
       const t = Math.min((performance.now() - startTime) / duration, 1);
       const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 
-      // Pizza base moves down when exploded
       pizzaGroup.position.y = THREE.MathUtils.lerp(
         pizzaStart,
         isExploded ? -0.06 : 0,
         eased
       );
 
-      // Layer discs
       layerGroup.children.forEach((child, i) => {
         const cfg    = (child as THREE.Mesh).userData.layer as LayerConfig;
         const mat    = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
@@ -350,7 +336,6 @@ const PizzaViewer: React.FC<Props> = ({ pizzaUrl, selectedToppings, isExploded =
         mat.needsUpdate = true;
       });
 
-      // Toppings float up
       toppingGroup.children.forEach((child, i) => {
         const baseY  = child.userData.baseY ?? 0.015;
         const ti     = child.userData.toppingIndex ?? 0;

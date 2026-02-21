@@ -3,16 +3,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { MenuItem, Topping } from '../types';
-
-const TOPPING_SPOTS: [number, number][] = [
-  [ 0.00,  0.00],
-  [-0.06, -0.06],
-  [ 0.06, -0.05],
-  [ 0.06,  0.06],
-  [-0.05,  0.07],
-  [ 0.00, -0.09],
-  [ 0.09,  0.00],
-];
+import { generateToppingPlacements } from '../lib/toppingPlacement';
 
 const FALLBACK_COLORS: Record<string, number> = {
   default:  0xff6b35,
@@ -57,9 +48,9 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
   const frameRef        = useRef<number>(0);
   const streamRef       = useRef<MediaStream | null>(null);
 
-  const [phase, setPhase]             = useState<ARPhase>('scanning');
+  const [phase, setPhase]                 = useState<ARPhase>('scanning');
   const [showNutrition, setShowNutrition] = useState(false);
-  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraError, setCameraError]     = useState<string | null>(null);
   const phaseRef = useRef<ARPhase>('scanning');
 
   const getBinaryId = () => {
@@ -77,7 +68,7 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: { ideal: 'environment' },  // rear camera preferred
+            facingMode: { ideal: 'environment' },
             width:  { ideal: 1280 },
             height: { ideal: 720 },
           },
@@ -90,7 +81,6 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
         }
 
         streamRef.current = stream;
-
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.play().catch(() => {});
@@ -121,9 +111,8 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     const w  = el.clientWidth;
     const h  = el.clientHeight;
 
-    // Renderer — transparent so the camera video shows through
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setClearColor(0x000000, 0); // fully transparent
+    renderer.setClearColor(0x000000, 0);
     renderer.setSize(w, h);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -213,7 +202,7 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     // ── Dish group (hidden until placed) ──────────────────────────────────────
     const dishGroup   = new THREE.Group();
     dishGroup.visible = false;
-    dishGroup.scale.setScalar(0.001); // start near-zero, not exactly 0 (avoids NaN)
+    dishGroup.scale.setScalar(0.001);
     scene.add(dishGroup);
     dishGroupRef.current = dishGroup;
 
@@ -265,7 +254,6 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     };
     window.addEventListener('resize', onResize);
 
-    // Auto-advance scanning → placing after 2s
     const scanTimer = setTimeout(() => {
       phaseRef.current = 'placing';
       setPhase('placing');
@@ -296,7 +284,6 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
       });
       const box   = new THREE.Box3().setFromObject(model);
       const size  = box.getSize(new THREE.Vector3());
-      // Larger scale for AR so the dish is clearly visible on-screen
       const scale = 0.5 / Math.max(size.x, size.y, size.z);
       model.scale.setScalar(scale);
       const center = box.getCenter(new THREE.Vector3());
@@ -305,7 +292,7 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     });
   }, [item.modelUrl]);
 
-  // ─── Load toppings ──────────────────────────────────────────────────────────
+  // ─── Load toppings — random non-overlapping placement ───────────────────────
   useEffect(() => {
     const toppingGroup = toppingGroupRef.current;
     if (!toppingGroup) return;
@@ -317,33 +304,47 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     }
     if (selectedToppings.length === 0) return;
 
-    const loader = new GLTFLoader();
-    const baseY  = 0.015;
+    const placements = generateToppingPlacements(selectedToppings);
+    const loader     = new GLTFLoader();
+    const baseY      = 0.015;
 
-    selectedToppings.forEach((topping, ti) => {
+    // Group placements by topping id so we load each model once
+    const byTopping = new Map<string, typeof placements>();
+    for (const p of placements) {
+      const arr = byTopping.get(p.topping.id) || [];
+      arr.push(p);
+      byTopping.set(p.topping.id, arr);
+    }
+
+    byTopping.forEach((spots) => {
+      const topping = spots[0].topping;
+
       const onLoaded = (obj: THREE.Object3D) => {
         const box   = new THREE.Box3().setFromObject(obj);
         const size  = box.getSize(new THREE.Vector3());
         const scale = 0.036 / Math.max(size.x, size.y, size.z);
         obj.scale.setScalar(scale);
 
-        TOPPING_SPOTS.forEach(([x, z], i) => {
+        spots.forEach((spot, i) => {
           const clone = obj.clone(true);
           clone.traverse(c => { if ((c as THREE.Mesh).isMesh) c.castShadow = true; });
+
           const cBox    = new THREE.Box3().setFromObject(clone);
           const ch      = cBox.getSize(new THREE.Vector3()).y;
           const targetY = baseY + ch * 0.5;
           const startY  = targetY + 0.3;
+
           clone.position.set(
-            x - cBox.getCenter(new THREE.Vector3()).x * scale,
+            spot.x - cBox.getCenter(new THREE.Vector3()).x * scale,
             startY,
-            z - cBox.getCenter(new THREE.Vector3()).z * scale,
+            spot.z - cBox.getCenter(new THREE.Vector3()).z * scale,
           );
-          clone.rotation.y = ((ti * 7 + i) * 1.3) % (Math.PI * 2);
+          clone.rotation.y = spot.rotation;
           clone.userData.baseY = targetY;
           toppingGroup.add(clone);
 
-          const delay    = (ti * 7 + i) * 70;
+          const globalIndex = spot.toppingIndex * 6 + i;
+          const delay    = globalIndex * 70;
           const duration = 520;
           const start    = performance.now() + delay;
           const drop = () => {
@@ -355,7 +356,7 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
               ? 4 * t * t * t
               : 1 + (overshoot + 1) * Math.pow(t - 1, 3) + overshoot * Math.pow(t - 1, 2);
             clone.position.y = startY + (targetY - startY) * Math.min(eased, 1);
-            clone.rotation.y += 0.08 * (1 - t);
+            clone.rotation.y = spot.rotation + 0.08 * (1 - t) * 6;
             if (t < 1) requestAnimationFrame(drop);
           };
           requestAnimationFrame(drop);
@@ -387,7 +388,6 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     controls.autoRotateSpeed = 1.2;
     dishGroup.visible = true;
 
-    // Fade out grid
     const fadeDuration = 400;
     const fadeStart    = performance.now();
     const fadeGrid = () => {
@@ -401,7 +401,6 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
     };
     requestAnimationFrame(fadeGrid);
 
-    // Fade in table shadow surface
     scene.traverse(c => {
       if (c.userData.isTable) {
         const m = (c as THREE.Mesh).material as THREE.MeshStandardMaterial;
@@ -415,19 +414,17 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
       }
     });
 
-    // Pop-in scale animation — target scale 1.0 (full size)
     const popDuration = 700;
     const popStart    = performance.now();
     const popIn = () => {
       const t     = Math.min((performance.now() - popStart) / popDuration, 1);
-      // Smooth overshoot easing for a satisfying pop
       const eased = t < 0.5
         ? 4 * t * t * t
         : 1 + 2.5 * Math.pow(t - 1, 3) + 2.5 * Math.pow(t - 1, 2);
       const s = Math.max(0.001, eased);
       dishGroup.scale.setScalar(s);
       if (t < 1) requestAnimationFrame(popIn);
-      else dishGroup.scale.setScalar(1); // ensure we land exactly at 1
+      else dishGroup.scale.setScalar(1);
     };
     requestAnimationFrame(popIn);
   };
@@ -444,7 +441,6 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
         playsInline
         muted
         className="absolute inset-0 w-full h-full object-cover z-0"
-        style={{ transform: 'scaleX(1)' }}
       />
 
       {/* Fallback background when camera is unavailable */}
@@ -465,7 +461,6 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
           <div className="absolute bottom-1/3 left-1/2 -translate-x-1/2 w-80 h-24 rounded-full opacity-20"
             style={{ background: 'radial-gradient(ellipse, #f2b90d 0%, transparent 70%)', filter: 'blur(20px)' }}
           />
-          {/* Camera error notice */}
           <div className="absolute top-32 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur-md border border-red-500/40 px-5 py-3 rounded-2xl z-50 max-w-[80%]">
             <div className="flex items-center gap-2">
               <span className="material-icons-round text-red-400 text-sm">videocam_off</span>
@@ -476,7 +471,7 @@ const ARScreen: React.FC<Props> = ({ item, selectedToppings = [], onBack }) => {
         </div>
       )}
 
-      {/* ── Three.js canvas (transparent, overlays camera) ─────────────── */}
+      {/* ── Three.js canvas ────────────────────────────────────────────── */}
       <div
         ref={mountRef}
         className="absolute inset-0 z-10"
