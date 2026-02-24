@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { View, MenuItem, CartItem, DiningStation, Topping } from './types';
 import { MENU_ITEMS } from './constants';
 import { fetchMenuItems } from './lib/supabaseMenu';
+import { createSupabaseOrder } from './lib/supabaseOrders';
 import StationSelectionScreen from './components/StationSelectionScreen';
 import MenuScreen from './components/MenuScreen';
 import CartScreen from './components/CartScreen';
@@ -35,6 +36,7 @@ const App: React.FC = () => {
   const [showOrderTracker, setShowOrderTracker] = useState(false);
   const [showSplitBill, setShowSplitBill] = useState(false);
   const [orderId] = useState(() => `ORD-${Date.now().toString(36).toUpperCase()}`);
+  const [supabaseOrderId, setSupabaseOrderId] = useState<string | null>(null);
 
   // ─── Fetch menu from Supabase on mount ──────────────────────────────
   useEffect(() => {
@@ -115,12 +117,25 @@ const App: React.FC = () => {
     navigateTo('AR');
   };
 
-  const handleConfirmOrder = () => {
+  const handleConfirmOrder = async () => {
     // 🔊 Sound: success chime on order confirmation
     playSuccess();
     setOrderConfirmed(true);
     setShowOrderTracker(true);
     navigateTo('TRACKER');
+
+    // Create order in Supabase (non-blocking — tracker starts with simulated mode
+    // and switches to Realtime if the DB order is created successfully)
+    const dbOrderId = await createSupabaseOrder({
+      displayId: orderId,
+      stationId: selectedStation?.id,
+      items: cart,
+    });
+
+    if (dbOrderId) {
+      setSupabaseOrderId(dbOrderId);
+      console.log('[LuxeTable] Order saved to Supabase:', dbOrderId);
+    }
   };
 
   const handleImport = (newItems: MenuItem[]) => {
@@ -212,6 +227,7 @@ const App: React.FC = () => {
       {showOrderTracker && orderConfirmed && (
         <OrderTracker
           orderId={orderId}
+          supabaseOrderId={supabaseOrderId}
           onClose={() => setShowOrderTracker(false)}
         />
       )}

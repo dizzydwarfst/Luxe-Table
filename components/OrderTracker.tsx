@@ -5,11 +5,12 @@ const ALL_STAGES: OrderStage[] = ['pending', 'confirmed', 'preparing', 'cooking'
 
 interface Props {
   orderId: string;
+  supabaseOrderId?: string | null;
   onClose: () => void;
 }
 
-const OrderTracker: React.FC<Props> = ({ orderId, onClose }) => {
-  const sync = useOrderSync(orderId);
+const OrderTracker: React.FC<Props> = ({ orderId, supabaseOrderId, onClose }) => {
+  const sync = useOrderSync(orderId, supabaseOrderId);
   const hasSubmitted = useRef(false);
 
   useEffect(() => {

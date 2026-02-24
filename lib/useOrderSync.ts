@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { playNotification, playSuccess } from './sounds';
+import { supabase, isSupabaseEnabled } from './supabase';
 
 // ─── Order Status Types ─────────────────────────────────────────────────────
 
@@ -48,12 +49,13 @@ const STAGE_CONFIG: Record<OrderStage, {
 
 export { STAGE_CONFIG };
 
-// ─── Simulated WebSocket Mode ───────────────────────────────────────────────
-// When no real WS endpoint is available, this simulates kitchen updates
-// with realistic timing. Replace `SIMULATED_WS` with your real endpoint.
+// ─── Mode Detection ─────────────────────────────────────────────────────────
+// Uses simulated mode when:
+// 1. VITE_USE_SIMULATED_KITCHEN is 'true' (explicit)
+// 2. Supabase is not configured
+// 3. No supabaseOrderId is provided (order wasn't created in DB)
 
-const SIMULATED_WS = true;
-const WS_ENDPOINT  = 'wss://your-kitchen-api.example.com/orders';
+const USE_SIMULATED = import.meta.env.VITE_USE_SIMULATED_KITCHEN === 'true' || !isSupabaseEnabled;
 
 const CHEF_NAMES = ['Chef Marco', 'Chef Yuki', 'Chef Priya', 'Chef Alex', 'Chef Luna'];
 
@@ -63,8 +65,8 @@ function randomChef(): string {
 
 // ─── Hook ───────────────────────────────────────────────────────────────────
 
-export function useOrderSync(orderId: string | null): OrderSyncState & {
-  /** Manually push the order to the kitchen (triggers the simulation or WS message) */
+export function useOrderSync(orderId: string | null, supabaseOrderId?: string | null): OrderSyncState & {
+  /** Manually push the order to the kitchen (triggers the simulation or Realtime subscription) */
   submitOrder: () => void;
   /** Get display config for current stage */
   stageConfig: typeof STAGE_CONFIG[OrderStage];
@@ -77,14 +79,20 @@ export function useOrderSync(orderId: string | null): OrderSyncState & {
     chefName: null,
   });
 
-  const wsRef      = useRef<WebSocket | null>(null);
-  const timersRef  = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const channelRef = useRef<any>(null);
 
-  // Clean up timers on unmount
+  // Determine if we should use Realtime or simulated
+  const useRealtime = !USE_SIMULATED && isSupabaseEnabled && !!supabaseOrderId;
+
+  // Clean up on unmount
   useEffect(() => {
     return () => {
       timersRef.current.forEach(t => clearTimeout(t));
-      wsRef.current?.close();
+      if (channelRef.current) {
+        supabase?.removeChannel(channelRef.current);
+      }
     };
   }, []);
 
@@ -126,8 +134,70 @@ export function useOrderSync(orderId: string | null): OrderSyncState & {
       chefName: null,
     }));
 
-    if (SIMULATED_WS) {
-      // Simulated kitchen timeline
+    if (useRealtime && supabase && supabaseOrderId) {
+      // ─── Supabase Realtime Mode ───────────────────────────────────
+      console.log('[LuxeTable] Subscribing to Realtime for order:', supabaseOrderId);
+
+      // Add the initial pending event
+      addEvent('pending', 'Order sent to kitchen...', 15);
+
+      // First, fetch any existing events for this order
+      supabase
+        .from('order_events')
+        .select('*')
+        .eq('order_id', supabaseOrderId)
+        .order('created_at', { ascending: true })
+        .then(({ data, error }) => {
+          if (!error && data && data.length > 0) {
+            // Replay existing events (in case we reconnected)
+            data.forEach((row: any) => {
+              addEvent(
+                row.stage as OrderStage,
+                row.message,
+                row.estimated_minutes ?? undefined,
+                row.chef_name ?? undefined,
+              );
+            });
+          }
+        });
+
+      // Subscribe to new events via Realtime
+      const channel = supabase
+        .channel(`order-events-${supabaseOrderId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'order_events',
+            filter: `order_id=eq.${supabaseOrderId}`,
+          },
+          (payload: any) => {
+            const row = payload.new;
+            if (row) {
+              console.log('[LuxeTable] Realtime event received:', row.stage);
+              addEvent(
+                row.stage as OrderStage,
+                row.message,
+                row.estimated_minutes ?? undefined,
+                row.chef_name ?? undefined,
+              );
+            }
+          }
+        )
+        .subscribe((status: string) => {
+          console.log('[LuxeTable] Realtime subscription status:', status);
+          setState(prev => ({
+            ...prev,
+            connected: status === 'SUBSCRIBED',
+          }));
+        });
+
+      channelRef.current = channel;
+
+    } else {
+      // ─── Simulated Kitchen Mode ───────────────────────────────────
+      console.log('[LuxeTable] Using simulated kitchen mode');
       const chef = randomChef();
 
       const timeline: Array<{
@@ -155,39 +225,8 @@ export function useOrderSync(orderId: string | null): OrderSyncState & {
         }, delay);
         timersRef.current.push(timer);
       });
-    } else {
-      // Real WebSocket connection
-      try {
-        const ws = new WebSocket(`${WS_ENDPOINT}/${orderId}`);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          setState(prev => ({ ...prev, connected: true }));
-          ws.send(JSON.stringify({ type: 'submit_order', orderId }));
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data) as KitchenEvent;
-            addEvent(data.stage, data.message, data.estimatedMinutes, data.chefName);
-          } catch (e) {
-            console.warn('Invalid kitchen event:', e);
-          }
-        };
-
-        ws.onerror = () => {
-          setState(prev => ({ ...prev, connected: false }));
-        };
-
-        ws.onclose = () => {
-          setState(prev => ({ ...prev, connected: false }));
-        };
-      } catch (err) {
-        console.error('WebSocket connection failed:', err);
-        setState(prev => ({ ...prev, connected: false }));
-      }
     }
-  }, [orderId, addEvent]);
+  }, [orderId, supabaseOrderId, useRealtime, addEvent]);
 
   return {
     ...state,
