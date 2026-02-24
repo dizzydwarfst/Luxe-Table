@@ -16,10 +16,17 @@ import ChefPairingToast from './components/ChefPairingToast';
 import PageTransition from './components/PageTransition';
 import OrderTracker from './components/OrderTracker';
 import SplitBillCalculator from './components/SplitBillCalculator';
+import KitchenDashboard from './components/KitchenDashboard';
 import { getPairingRecommendation } from './lib/gemini';
 import { playDing, playPop, playSizzle, playWhoosh, playSuccess } from './lib/sounds';
 
-const App: React.FC = () => {
+// ─── Kitchen Dashboard Route ──────────────────────────────────────────────────
+// Access via ?kitchen=true in the URL (e.g. localhost:3000?kitchen=true)
+const isKitchenMode = new URLSearchParams(window.location.search).get('kitchen') === 'true';
+
+// ─── Diner App ────────────────────────────────────────────────────────────────
+
+const DinerApp: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>('STATION');
   const [selectedStation, setSelectedStation] = useState<DiningStation | null>(null);
   const [menu, setMenu] = useState<MenuItem[]>(MENU_ITEMS);
@@ -64,7 +71,6 @@ const App: React.FC = () => {
   };
 
   const addToCart = async (item: MenuItem, skipSuggestion = false, toppings: Topping[] = []) => {
-    // 🔊 Sound: ding on add-to-cart
     playDing();
 
     setCart(prev => {
@@ -92,7 +98,6 @@ const App: React.FC = () => {
   };
 
   const updateQuantity = (id: string, delta: number) => {
-    // 🔊 Sound: pop on quantity change
     playPop();
 
     setCart(prev => prev.map(i => {
@@ -113,19 +118,16 @@ const App: React.FC = () => {
   const handleAR = (item: MenuItem, toppings: Topping[] = []) => {
     setSelectedItem(item);
     setSelectedToppings(toppings);
-    // 🔊 Sound: sizzle plays inside ARScreen on dish placement
     navigateTo('AR');
   };
 
   const handleConfirmOrder = async () => {
-    // 🔊 Sound: success chime on order confirmation
     playSuccess();
     setOrderConfirmed(true);
     setShowOrderTracker(true);
     navigateTo('TRACKER');
 
-    // Create order in Supabase (non-blocking — tracker starts with simulated mode
-    // and switches to Realtime if the DB order is created successfully)
+    // Create order in Supabase (non-blocking)
     const dbOrderId = await createSupabaseOrder({
       displayId: orderId,
       stationId: selectedStation?.id,
@@ -143,7 +145,6 @@ const App: React.FC = () => {
     setIsImporterOpen(false);
   };
 
-  // Determine transition direction based on view change
   const getTransitionDirection = (): 'left' | 'right' | 'up' | 'fade' => {
     if (currentView === 'CART' || currentView === 'PREVIEW') return 'left';
     if (currentView === 'AR') return 'up';
@@ -153,7 +154,6 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col h-screen w-full max-w-md mx-auto bg-white dark:bg-slate-950 overflow-hidden relative shadow-2xl font-display">
 
-      {/* ─── Page Transition Wrapper ─────────────────────────────────── */}
       <PageTransition
         viewKey={currentView}
         direction={getTransitionDirection()}
@@ -223,7 +223,6 @@ const App: React.FC = () => {
         )}
       </PageTransition>
 
-      {/* ─── Order Tracker Overlay ──────────────────────────────────── */}
       {showOrderTracker && orderConfirmed && (
         <OrderTracker
           orderId={orderId}
@@ -232,7 +231,6 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* ─── Split Bill Calculator Overlay ──────────────────────────── */}
       {showSplitBill && (
         <SplitBillCalculator
           items={cart}
@@ -240,7 +238,6 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* ─── Existing Overlays ─────────────────────────────────────── */}
       {activeSuggestion && (
         <ChefPairingToast
           suggestion={activeSuggestion}
@@ -272,7 +269,6 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* ─── AI Chef FAB ───────────────────────────────────────────── */}
       {currentView !== 'STATION' && currentView !== 'AR' && currentView !== 'TRACKER' && !isChatOpen && !isQuestionnaireOpen && !isImporterOpen && (
         <button
           onClick={() => setIsChatOpen(true)}
@@ -282,7 +278,6 @@ const App: React.FC = () => {
         </button>
       )}
 
-      {/* ─── Bottom Navigation ─────────────────────────────────────── */}
       {(currentView === 'MENU' || (currentView === 'TRACKER' && orderConfirmed)) && (
         <nav className="absolute bottom-0 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-8 pt-3 px-6 flex justify-between items-center z-40 animate-slide-up">
           <button
@@ -323,10 +318,8 @@ const App: React.FC = () => {
         </nav>
       )}
 
-      {/* ─── Tracker screen action buttons ─────────────────────────── */}
       {currentView === 'TRACKER' && orderConfirmed && (
         <div className="absolute bottom-24 left-0 right-0 z-30 flex justify-center gap-3 px-6">
-          {/* Live order tracking button */}
           <button
             onClick={() => setShowOrderTracker(true)}
             className="flex items-center gap-2 bg-navy text-white px-5 py-3 rounded-2xl shadow-xl active:scale-95 transition-transform"
@@ -335,7 +328,6 @@ const App: React.FC = () => {
             <span className="text-xs font-black uppercase tracking-wide">Live Track</span>
           </button>
 
-          {/* Split bill button */}
           <button
             onClick={() => setShowSplitBill(true)}
             className="flex items-center gap-2 bg-white dark:bg-slate-800 text-navy dark:text-white px-5 py-3 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 active:scale-95 transition-transform"
@@ -347,6 +339,13 @@ const App: React.FC = () => {
       )}
     </div>
   );
+};
+
+// ─── Root App — Routes to Kitchen or Diner ────────────────────────────────────
+
+const App: React.FC = () => {
+  if (isKitchenMode) return <KitchenDashboard />;
+  return <DinerApp />;
 };
 
 export default App;
