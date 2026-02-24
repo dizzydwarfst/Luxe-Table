@@ -1,6 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { View, MenuItem, CartItem, DiningStation, Topping } from './types';
 import { MENU_ITEMS } from './constants';
+import { fetchMenuItems } from './lib/supabaseMenu';
 import StationSelectionScreen from './components/StationSelectionScreen';
 import MenuScreen from './components/MenuScreen';
 import CartScreen from './components/CartScreen';
@@ -34,6 +35,20 @@ const App: React.FC = () => {
   const [showOrderTracker, setShowOrderTracker] = useState(false);
   const [showSplitBill, setShowSplitBill] = useState(false);
   const [orderId] = useState(() => `ORD-${Date.now().toString(36).toUpperCase()}`);
+
+  // ─── Fetch menu from Supabase on mount ──────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchMenuItems().then((items) => {
+      if (!cancelled && items.length > 0) {
+        setMenu(items);
+        console.log(`[LuxeTable] Loaded ${items.length} menu items from Supabase`);
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, []);
 
   // ─── Navigate with sound ────────────────────────────────────────────
   const navigateTo = useCallback((view: View) => {
